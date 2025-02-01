@@ -16,7 +16,7 @@ const Bar = struct {
     }
 
     // Using default implementation for deinit
-    pub const deinit = xtra.raii.default(@This(), "allocator", .{"bar_data"});
+    pub const deinit = xtra.raii.default(@This(), .{"bar_data"});
 };
 
 const Foo = struct {

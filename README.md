@@ -10,8 +10,6 @@ Library with helpers for implementing higher level concepts and utils.
 Check [raii example](examples/raii-example.zig).
 
 ```zig
-const std = @import("std");
-const xtra = @import("zig-xtra");
 
 const Bar = struct {
     allocator: std.mem.Allocator,
@@ -89,7 +87,7 @@ const Bar = struct {
 
     // Using dupe default implementation
     pub const dupe = xtra.duplication.default(@This());
-    pub const deinit = xtra.raii.default(@This(), "allocator", .{"bar_data"});
+    pub const deinit = xtra.raii.default(@This(), .{"bar_data"});
 };
 
 const Foo = struct {
@@ -114,7 +112,7 @@ const Foo = struct {
         };
     }
 
-    pub const deinit = xtra.raii.defaultWithAllocator(@This(), .{"foo_data"});
+    pub const deinit = xtra.raii.defaultWithoutAllocator(@This(), .{"foo_data"});
 };
 
 test {

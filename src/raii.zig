@@ -132,7 +132,11 @@ pub inline fn cleanup(comptime T: type, allocator: std.mem.Allocator, self: *T) 
     }
 }
 
-pub fn default(comptime Self: type, comptime allocator_field: []const u8, owned_pointers: anytype) fn (self: *Self) void {
+pub inline fn default(comptime Self: type, owned_pointers: anytype) fn (self: *Self) void {
+    return defaultWithAllocator(Self, "allocator", owned_pointers);
+}
+
+pub fn defaultWithAllocator(comptime Self: type, comptime allocator_field: []const u8, owned_pointers: anytype) fn (self: *Self) void {
     return struct {
         fn do(self: *Self) void {
             inline for (owned_pointers) |field| {
@@ -167,7 +171,7 @@ pub fn default(comptime Self: type, comptime allocator_field: []const u8, owned_
     }.do;
 }
 
-pub fn defaultWithAllocator(comptime Self: type, owned_pointers: anytype) fn (self: *Self, allocator: std.mem.Allocator) void {
+pub fn defaultWithoutAllocator(comptime Self: type, owned_pointers: anytype) fn (self: *Self, allocator: std.mem.Allocator) void {
     return struct {
         fn do(self: *Self, allocator: std.mem.Allocator) void {
             inline for (owned_pointers) |field| {
@@ -315,7 +319,7 @@ test "Struct with default deinitializer and allocator parameter" {
             };
         }
 
-        pub const deinit = defaultWithAllocator(@This(), .{ "a", "b" });
+        pub const deinit = defaultWithoutAllocator(@This(), .{ "a", "b" });
     };
 
     var foo: Foo = try .init(std.testing.allocator);
@@ -339,7 +343,7 @@ test "Struct with default deinitializer" {
             };
         }
 
-        pub const deinit = default(@This(), "allocator", .{ "a", "b" });
+        pub const deinit = default(@This(), .{ "a", "b" });
     };
 
     var foo: Foo = try .init(std.testing.allocator);
