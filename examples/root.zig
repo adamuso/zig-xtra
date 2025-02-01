@@ -1,6 +1,7 @@
 const std = @import("std");
 
-const raiiExample = @import("raii-example.zig");
+pub const raiiExample = @import("raii-example.zig");
+pub const duplicationExample = @import("duplication-example.zig");
 
 comptime {
     std.testing.refAllDecls(@This());

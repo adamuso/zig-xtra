@@ -47,7 +47,7 @@ const Foo = struct {
     }
 };
 
-test "raii - example" {
+test {
     var foo: Foo = try Foo.init(std.testing.allocator);
     defer foo.deinit(std.testing.allocator);
 
