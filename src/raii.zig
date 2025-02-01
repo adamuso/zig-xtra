@@ -1,3 +1,9 @@
+//! raii tries to implement `deinit` pattern which allows for automatic and hierarchical deinitialization
+//! of the objects known from C++ destructors. It is compatible with `deinit` functions defined for std types,
+//! but be aware that most std types do not deinitialize inner data (for example ArrayList does not deinitialize
+//! its items), so always remember to deinitialize the data inside data structures (or create a wrapper which does
+//! that for you).
+
 const std = @import("std");
 const helpers = @import("helpers.zig");
 

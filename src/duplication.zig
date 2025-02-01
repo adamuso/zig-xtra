@@ -1,12 +1,17 @@
+//! Allows for duplicating (deep cloning) objects using `dupe` pattern.
+
 const std = @import("std");
 const helpers = @import("helpers.zig");
 
+/// Type of the function returned by `dupePtrFn`
 pub const DupePtr = *const fn (allocator: std.mem.Allocator, value: *const anyopaque) anyerror!*anyopaque;
 
+/// Type of the function returned by `dupeSliceFn`
 pub fn DupeSlice(comptime T: type) type {
     return *const fn (allocator: std.mem.Allocator, value: []const T) anyerror![]T;
 }
 
+/// Type of the function returned by `dupeFn`
 pub fn Dupe(comptime T: type) type {
     return *const fn (allocator: std.mem.Allocator, value: T) anyerror!T;
 }
@@ -15,10 +20,20 @@ pub const Error = error{
     DupeIsNotSupported,
 };
 
+/// Create a duplicate of the `value`. This function will try to create a deep clone of the
+/// object. If value is a pointer or slice, new memory will be allocated and pointed object
+/// will be duped. If value is a tuple then this function will iterate through all fields
+/// and copy them recursively using dupe function. If a field is a struct, union, enum or
+/// opaque and has `dupe` function, then it will be used to dupe an object. When no `dupe`
+/// function is available then `value` is returned as a result (and this can create a shallow
+/// copy).
+///
+/// Copied object should implement `dupe` function with an `allocator` as a parameter.
 pub fn dupe(comptime T: type, allocator: std.mem.Allocator, value: T) !T {
     return try dupeFn(T)(allocator, value);
 }
 
+/// Returns a function which can be used to dupe an object using an allocator for specified type.
 pub fn dupeFn(comptime T: type) Dupe(T) {
     return struct {
         fn dupeImpl(allocator: std.mem.Allocator, value: T) !T {
