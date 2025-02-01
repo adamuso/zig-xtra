@@ -1,13 +1,3 @@
-# zig-xtra
-
-Library with helpers for implementing higher level concepts and utils.
-
-## `deinit` pattern with RAII
-
-`raii` allows for automatic and hierarchical deinitialization of the objects known from C++ destructors. Using `raii` when
-`deinit` is called we can automatically iterate through each field of the struct and deinitialize it recursively.
-
-```zig
 const std = @import("std");
 const xtra = @import("zig-xtra");
 
@@ -63,8 +53,3 @@ test "raii - example" {
 
     // No memory leaks
 }
-```
-
-## Any type
-
-TODO
