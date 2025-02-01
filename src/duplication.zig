@@ -64,12 +64,12 @@ pub fn dupeFn(comptime T: type) Dupe(T) {
 
                     return result;
                 } else {
-                    if (@hasDecl(T, "dupe")) {
+                    if (@hasDecl(T, "dupe") and @typeInfo(@TypeOf(T.dupe)).@"fn".params.len == 2) {
                         return try value.dupe(allocator);
                     }
                 },
                 .@"union", .@"enum", .@"opaque" => {
-                    if (@hasDecl(T, "dupe")) {
+                    if (@hasDecl(T, "dupe") and @typeInfo(@TypeOf(T.dupe)).@"fn".params.len == 2) {
                         return try value.dupe(allocator);
                     }
                 },
@@ -135,7 +135,21 @@ pub fn noDupeSlice(_: std.mem.Allocator, _: []const anyopaque) ![]anyopaque {
     return Error.DupeIsNotSupported;
 }
 
-test "Basic dulication" {
+pub fn default(comptime Self: type) fn (self: Self, allocator: std.mem.Allocator) anyerror!Self {
+    return struct {
+        fn do(self: Self, allocator: std.mem.Allocator) !Self {
+            var copy: Self = undefined;
+
+            inline for (@typeInfo(Self).@"struct".fields) |field| {
+                @field(copy, field.name) = try dupe(field.type, allocator, @field(self, field.name));
+            }
+
+            return copy;
+        }
+    }.do;
+}
+
+test "Basic duplication" {
     const a: u32 = 10;
     const b = try dupe(u32, std.testing.allocator, a);
 
@@ -151,4 +165,66 @@ test "Basic dulication" {
     const f = try dupe(@TypeOf(e), std.testing.allocator, e);
 
     try std.testing.expectEqualDeep(e, f);
+}
+
+test "Struct default copy" {
+    const Foo = struct {
+        allocator: std.mem.Allocator,
+        foo_data: *u32,
+
+        fn init(allocator: std.mem.Allocator, value: u32) !@This() {
+            const data = try allocator.create(u32);
+            data.* = value;
+
+            return .{
+                .allocator = allocator,
+                .foo_data = data,
+            };
+        }
+
+        pub const dupe = default(@This());
+
+        fn deinit(self: @This()) void {
+            self.allocator.destroy(self.foo_data);
+        }
+    };
+
+    const Bar = struct {
+        foo: Foo,
+        bar_data: *u32,
+
+        fn init(allocator: std.mem.Allocator, value: u32) !@This() {
+            const data = try allocator.create(u32);
+            data.* = value;
+
+            return .{
+                .foo = try .init(allocator, value * 2),
+                .bar_data = data,
+            };
+        }
+
+        pub const dupe = default(@This());
+
+        fn deinit(self: @This(), allocator: std.mem.Allocator) void {
+            allocator.destroy(self.bar_data);
+            self.foo.deinit();
+        }
+    };
+
+    const foo: Foo = try .init(std.testing.allocator, 10);
+    const foo2 = try foo.dupe(std.testing.allocator);
+
+    defer foo.deinit();
+    defer foo2.deinit();
+
+    const bar: Bar = try .init(std.testing.allocator, 10);
+    const bar2 = try bar.dupe(std.testing.allocator);
+
+    defer bar.deinit(std.testing.allocator);
+    defer bar2.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(bar.bar_data.*, bar2.bar_data.*);
+    try std.testing.expectEqual(bar.foo.foo_data.*, bar2.foo.foo_data.*);
+    try std.testing.expect(bar.bar_data != bar2.bar_data);
+    try std.testing.expect(bar.foo.foo_data != bar2.foo.foo_data);
 }

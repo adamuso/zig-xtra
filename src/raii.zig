@@ -132,6 +132,64 @@ pub inline fn cleanup(comptime T: type, allocator: std.mem.Allocator, self: *T) 
     }
 }
 
+pub fn default(comptime Self: type, comptime allocator_field: []const u8, owned_pointers: anytype) fn (self: *Self) void {
+    return struct {
+        fn do(self: *Self) void {
+            inline for (owned_pointers) |field| {
+                const field_type = @TypeOf(@field(self, field));
+
+                if (!helpers.isPointer(field_type)) {
+                    @compileError("Owned pointer must only include fields that are pointer type");
+                }
+
+                if (helpers.isSlice(field_type)) {
+                    destroy(
+                        field_type,
+                        @field(self, allocator_field),
+                        &@field(self, field),
+                    );
+                    continue;
+                }
+
+                destroy(
+                    @TypeOf(@field(self, field).*),
+                    @field(self, allocator_field),
+                    @field(self, field),
+                );
+            }
+
+            cleanup(
+                Self,
+                @field(self, allocator_field),
+                self,
+            );
+        }
+    }.do;
+}
+
+pub fn defaultWithAllocator(comptime Self: type, owned_pointers: anytype) fn (self: *Self, allocator: std.mem.Allocator) void {
+    return struct {
+        fn do(self: *Self, allocator: std.mem.Allocator) void {
+            inline for (owned_pointers) |field| {
+                const field_type = @TypeOf(@field(self, field));
+
+                if (!helpers.isPointer(field_type)) {
+                    @compileError("Owned pointer must only include fields that are pointer type");
+                }
+
+                if (helpers.isSlice(field_type)) {
+                    destroy(field_type, allocator, &@field(self, field));
+                    continue;
+                }
+
+                destroy(@TypeOf(@field(self, field).*), allocator, @field(self, field));
+            }
+
+            cleanup(Self, allocator, self);
+        }
+    }.do;
+}
+
 /// Contains declarations for raii functions which automatically deduce type from the `value` parameter.
 /// All functions expects `value` to be a pointer.
 pub const auto = struct {
@@ -240,4 +298,50 @@ test "Deinit and free an ArrayList with structs inside" {
 
     auto.deinit(std.testing.allocator, &value.items);
     auto.deinit(value.allocator, &value);
+}
+
+test "Struct with default deinitializer and allocator parameter" {
+    const Foo = struct {
+        a: *u32,
+        b: []u8,
+
+        fn init(allocator: std.mem.Allocator) !@This() {
+            const a = try allocator.create(u32);
+            a.* = 10;
+
+            return .{
+                .a = a,
+                .b = try allocator.alloc(u8, 10),
+            };
+        }
+
+        pub const deinit = defaultWithAllocator(@This(), .{ "a", "b" });
+    };
+
+    var foo: Foo = try .init(std.testing.allocator);
+    defer foo.deinit(std.testing.allocator);
+}
+
+test "Struct with default deinitializer" {
+    const Foo = struct {
+        allocator: std.mem.Allocator,
+        a: *u32,
+        b: []u8,
+
+        fn init(allocator: std.mem.Allocator) !@This() {
+            const a = try allocator.create(u32);
+            a.* = 10;
+
+            return .{
+                .allocator = allocator,
+                .a = a,
+                .b = try allocator.alloc(u8, 10),
+            };
+        }
+
+        pub const deinit = default(@This(), "allocator", .{ "a", "b" });
+    };
+
+    var foo: Foo = try .init(std.testing.allocator);
+    defer foo.deinit();
 }

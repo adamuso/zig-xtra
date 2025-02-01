@@ -27,12 +27,8 @@ const Bar = struct {
         };
     }
 
-    // Always declare deinit as pub
-    pub fn deinit(self: *Bar) void {
-        // We need to deinitialize pointers explicitly
-        xtra.raii.auto.destroy(self.allocator, self.bar_data);
-        xtra.raii.auto.selfCleanup(self);
-    }
+    // Using default implementation for deinit
+    pub const deinit = xtra.raii.default(@This(), .{"bar_data"});
 };
 
 const Foo = struct {
@@ -49,7 +45,7 @@ const Foo = struct {
         };
     }
 
-    // Always declare deinit as pub
+    // Custom implementation for deinit, always declare deinit as pub
     pub fn deinit(self: *Foo, allocator: std.mem.Allocator) void {
         // We need to deinitialize pointers explicitly
         xtra.raii.auto.destroy(allocator, self.foo_data);
@@ -59,7 +55,7 @@ const Foo = struct {
     }
 };
 
-test "raii - example" {
+test {
     var foo: Foo = try Foo.init(std.testing.allocator);
     defer foo.deinit(std.testing.allocator);
 
@@ -91,17 +87,9 @@ const Bar = struct {
         };
     }
 
-    pub fn dupe(self: Bar, allocator: std.mem.Allocator) !Bar {
-        return .{
-            .allocator = allocator,
-            .bar_data = try xtra.duplication.dupe(*u32, allocator, self.bar_data),
-        };
-    }
-
-    pub fn deinit(self: *Bar) void {
-        xtra.raii.auto.destroy(self.allocator, self.bar_data);
-        xtra.raii.auto.selfCleanup(self);
-    }
+    // Using dupe default implementation
+    pub const dupe = xtra.duplication.default(@This());
+    pub const deinit = xtra.raii.default(@This(), "allocator", .{"bar_data"});
 };
 
 const Foo = struct {
@@ -118,6 +106,7 @@ const Foo = struct {
         };
     }
 
+    // Creating custom dupe implementation
     pub fn dupe(self: Foo, allocator: std.mem.Allocator) !Foo {
         return .{
             .bar = try self.bar.dupe(allocator),
@@ -125,10 +114,7 @@ const Foo = struct {
         };
     }
 
-    pub fn deinit(self: *Foo, allocator: std.mem.Allocator) void {
-        xtra.raii.auto.destroy(allocator, self.foo_data);
-        xtra.raii.auto.externalCleanup(allocator, self);
-    }
+    pub const deinit = xtra.raii.defaultWithAllocator(@This(), .{"foo_data"});
 };
 
 test {

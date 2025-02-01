@@ -15,12 +15,8 @@ const Bar = struct {
         };
     }
 
-    // Always declare deinit as pub
-    pub fn deinit(self: *Bar) void {
-        // We need to deinitialize pointers explicitly
-        xtra.raii.auto.destroy(self.allocator, self.bar_data);
-        xtra.raii.auto.selfCleanup(self);
-    }
+    // Using default implementation for deinit
+    pub const deinit = xtra.raii.default(@This(), "allocator", .{"bar_data"});
 };
 
 const Foo = struct {
@@ -37,7 +33,7 @@ const Foo = struct {
         };
     }
 
-    // Always declare deinit as pub
+    // Custom implementation for deinit, always declare deinit as pub
     pub fn deinit(self: *Foo, allocator: std.mem.Allocator) void {
         // We need to deinitialize pointers explicitly
         xtra.raii.auto.destroy(allocator, self.foo_data);
