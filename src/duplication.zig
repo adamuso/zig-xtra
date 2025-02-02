@@ -4,16 +4,16 @@ const std = @import("std");
 const helpers = @import("helpers.zig");
 
 /// Type of the function returned by `dupePtrFn`
-pub const DupePtr = *const fn (allocator: std.mem.Allocator, value: *const anyopaque) anyerror!*anyopaque;
+pub const DupePtr = fn (allocator: std.mem.Allocator, value: *const anyopaque) anyerror!*anyopaque;
 
 /// Type of the function returned by `dupeSliceFn`
 pub fn DupeSlice(comptime T: type) type {
-    return *const fn (allocator: std.mem.Allocator, value: []const T) anyerror![]T;
+    return fn (allocator: std.mem.Allocator, value: []const T) anyerror![]T;
 }
 
 /// Type of the function returned by `dupeFn`
 pub fn Dupe(comptime T: type) type {
-    return *const fn (allocator: std.mem.Allocator, value: T) anyerror!T;
+    return fn (allocator: std.mem.Allocator, value: T) anyerror!T;
 }
 
 pub const Error = error{

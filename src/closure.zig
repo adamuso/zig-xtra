@@ -166,8 +166,8 @@ pub const AnyClosure = struct {
         tag: *const anyopaque,
         func: *const anyopaque,
         destroyCaptures: *const raii.Destroy,
-        dupeCaptures: duplication.DupePtr,
-        eqlCaptures: equality.OpaqueEql,
+        dupeCaptures: *const duplication.DupePtr,
+        eqlCaptures: *const equality.OpaqueEql,
     },
 
     pub fn dupe(self: @This(), allocator: std.mem.Allocator) !@This() {
@@ -710,16 +710,3 @@ test "Eql closure with a pointer inside" {
 
     try std.testing.expect(any_closure.eql(any_closure2));
 }
-
-// inline fn isComptime(v: anytype) bool {
-//     return @typeInfo(@TypeOf(.{v})).struct.fields[0].is_comptime;
-// }
-
-// fn abc(x: anytype) void {
-//     std.debug.print("{}\n", .{isComptime(x)});
-// }
-
-// test "Test" {
-//     const x: []const u8 = "asd"; // try std.testing.allocator.alloc(u8, 10);
-//     abc(.{x});
-// }

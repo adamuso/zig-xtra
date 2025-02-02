@@ -144,3 +144,11 @@ test {
 ## Any type
 
 TODO
+
+## `eql` pattern
+
+TODO
+
+## Closures
+
+TODO

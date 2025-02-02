@@ -1,9 +1,9 @@
 const std = @import("std");
 
-pub const OpaqueEql = *const fn (value: *const anyopaque, other: *const anyopaque) bool;
+pub const OpaqueEql = fn (value: *const anyopaque, other: *const anyopaque) bool;
 
 pub fn Eql(comptime T: type) type {
-    return *const fn (value: T, other: T) bool;
+    return fn (value: T, other: T) bool;
 }
 
 pub fn eql(comptime T: type, value: T, other: T) bool {
@@ -64,18 +64,12 @@ pub fn eqlFn(comptime T: type) Eql(T) {
                     }
                     return true;
                 },
-                .pointer => |info| {
-                    return switch (info.size) {
-                        .one, .many, .c => a == b,
-                        .slice => a.ptr == b.ptr and a.len == b.len,
-                    };
-                },
                 .optional => {
                     if (a == null and b == null) return true;
                     if (a == null or b == null) return false;
                     return eql(a.?, b.?);
                 },
-                else => return a == b,
+                else => return std.meta.eql(a, b),
             }
         }
     }.eqlImpl;
