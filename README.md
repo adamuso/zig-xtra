@@ -2,6 +2,18 @@
 
 Library with helpers for implementing higher level concepts and utils.
 
+## Roadmap
+
+- [x] Deinitialization pattern
+- [x] Duplication pattern
+- [] Any type
+- [] Closures
+- [] Iterator
+- [] Enumerables (like C#)
+- [] Equality pattern
+- [] More compile time checks and errors
+- [] Naming: Is `raii` a good name?
+
 ## `deinit` pattern with RAII
 
 `raii` allows for automatic and hierarchical deinitialization of the objects known from C++ destructors. Using `raii` when
