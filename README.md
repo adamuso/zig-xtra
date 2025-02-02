@@ -6,13 +6,13 @@ Library with helpers for implementing higher level concepts and utils.
 
 - [x] Deinitialization pattern
 - [x] Duplication pattern
-- [] Any type
-- [] Closures
-- [] Iterator
-- [] Enumerables (like C#)
-- [] Equality pattern
-- [] More compile time checks and errors
-- [] Naming: Is `raii` a good name?
+- [ ] Any type
+- [ ] Closures
+- [ ] Iterator
+- [ ] Enumerables (like C#)
+- [ ] Equality pattern
+- [ ] More compile time checks and errors
+- [ ] Naming: Is `raii` a good name?
 
 ## `deinit` pattern with RAII
 
