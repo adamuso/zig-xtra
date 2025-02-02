@@ -37,66 +37,6 @@ fn FnWithoutContext(comptime Fn: type) type {
     }
 }
 
-fn OpaqueClosure0(comptime Self: type, comptime Fn: type) type {
-    return struct {
-        pub fn invoke(
-            self: Self,
-        ) @typeInfo(Self.Function).@"fn".return_type.? {
-            return @as(*const Fn, @alignCast(@ptrCast(self.closure.vtable.func)))(self.closure.captures);
-        }
-    };
-}
-
-fn OpaqueClosure1(comptime Self: type, comptime Fn: type) type {
-    return struct {
-        pub fn invoke(
-            self: Self,
-            arg1: @typeInfo(Self.Function).@"fn".params[0].type.?,
-        ) @typeInfo(Self.Function).@"fn".return_type.? {
-            return @as(*const Fn, @alignCast(@ptrCast(self.closure.vtable.func)))(self.closure.captures, arg1);
-        }
-    };
-}
-
-fn OpaqueClosure2(comptime Self: type, comptime Fn: type) type {
-    return struct {
-        pub fn invoke(
-            self: Self,
-            arg1: @typeInfo(Self.Function).@"fn".params[0].type.?,
-            arg2: @typeInfo(Self.Function).@"fn".params[1].type.?,
-        ) @typeInfo(Self.Function).@"fn".return_type.? {
-            return @as(*const Fn, @alignCast(@ptrCast(self.closure.vtable.func)))(self.closure.captures, arg1, arg2);
-        }
-    };
-}
-
-fn OpaqueClosure3(comptime Self: type, comptime Fn: type) type {
-    return struct {
-        pub fn invoke(
-            self: Self,
-            arg1: @typeInfo(Self.Function).@"fn".params[0].type.?,
-            arg2: @typeInfo(Self.Function).@"fn".params[1].type.?,
-            arg3: @typeInfo(Self.Function).@"fn".params[2].type.?,
-        ) @typeInfo(Self.Function).@"fn".return_type.? {
-            return @as(*const Fn, @alignCast(@ptrCast(self.closure.vtable.func)))(self.closure.captures, arg1, arg2, arg3);
-        }
-    };
-}
-
-fn OpaqueClosure4(comptime Self: type, comptime Fn: type) type {
-    return struct {
-        pub fn invoke(
-            self: Self,
-            arg1: @typeInfo(Self.Function).@"fn".params[0].type.?,
-            arg2: @typeInfo(Self.Function).@"fn".params[1].type.?,
-            arg3: @typeInfo(Self.Function).@"fn".params[2].type.?,
-            arg4: @typeInfo(Self.Function).@"fn".params[3].type.?,
-        ) @typeInfo(Self.Function).@"fn".return_type.? {
-            return @as(*const Fn, @alignCast(@ptrCast(self.closure.vtable.fcunc)))(self.closure.captures, arg1, arg2, arg3, arg4);
-        }
-    };
-}
-
 fn AnyContextFunc(comptime Fn: type) type {
     return FnWithContext(Fn, *anyopaque);
 }
@@ -225,7 +165,7 @@ pub const AnyClosure = struct {
         can_blindly_invoke: bool,
         tag: *const anyopaque,
         func: *const anyopaque,
-        deinitCaptures: raii.DeinitAndDestroy,
+        destroyCaptures: *const raii.Destroy,
         dupeCaptures: duplication.DupePtr,
         eqlCaptures: equality.OpaqueEql,
     },
@@ -243,7 +183,7 @@ pub const AnyClosure = struct {
 
     pub fn deinit(self: @This()) void {
         if (self.captures != void_address and self.allocator != null) {
-            self.vtable.deinitCaptures(self.allocator.?, self.captures);
+            self.vtable.destroyCaptures(self.allocator.?, self.captures);
         }
     }
 
@@ -279,6 +219,7 @@ pub fn OpaqueClosure(comptime Fn: type) type {
         pub const Function = Fn;
         pub const Return = @typeInfo(Fn).@"fn".return_type.?;
         pub const Error = error{AllocatorIsRequiredForInit};
+        pub const Self = @This();
 
         pub fn init(
             allocator: ?std.mem.Allocator,
@@ -301,7 +242,7 @@ pub fn OpaqueClosure(comptime Fn: type) type {
                             .can_blindly_invoke = @typeInfo(Fn).@"fn".params.len == 0 and @typeInfo(Fn).@"fn".return_type.? == void,
                             .tag = AnyClosure.tag(Fn),
                             .func = anyContextFunc(Fn, Captures, func),
-                            .deinitCaptures = raii.noDeinitAndDestroy,
+                            .destroyCaptures = raii.noDestroy,
                             .dupeCaptures = duplication.noDupePtr,
                             .eqlCaptures = equality.opaqueEqlFn(Captures),
                         },
@@ -319,7 +260,7 @@ pub fn OpaqueClosure(comptime Fn: type) type {
                             .can_blindly_invoke = @typeInfo(Fn).@"fn".params.len == 0 and @typeInfo(Fn).@"fn".return_type.? == void,
                             .tag = AnyClosure.tag(Fn),
                             .func = anyContextFunc(Fn, Captures, func),
-                            .deinitCaptures = raii.noDeinitAndDestroy,
+                            .destroyCaptures = raii.noDestroy,
                             .dupeCaptures = duplication.noDupePtr,
                             .eqlCaptures = equality.opaqueAlwaysEql,
                         },
@@ -341,7 +282,7 @@ pub fn OpaqueClosure(comptime Fn: type) type {
                         .can_blindly_invoke = @typeInfo(Fn).@"fn".params.len == 0 and @typeInfo(Fn).@"fn".return_type.? == void,
                         .tag = AnyClosure.tag(Fn),
                         .func = anyContextFunc(Fn, Captures, func),
-                        .deinitCaptures = raii.deinitAndDestroyFn(Captures),
+                        .destroyCaptures = raii.destroyFn(Captures),
                         .dupeCaptures = duplication.dupePtrFn(Captures),
                         .eqlCaptures = equality.opaqueEqlFn(Captures),
                     },
@@ -372,12 +313,52 @@ pub fn OpaqueClosure(comptime Fn: type) type {
             self.closure.deinit();
         }
 
-        pub usingnamespace switch (@typeInfo(Fn).@"fn".params.len) {
-            0 => OpaqueClosure0(@This(), AnyContextFunc(Fn)),
-            1 => OpaqueClosure1(@This(), AnyContextFunc(Fn)),
-            2 => OpaqueClosure2(@This(), AnyContextFunc(Fn)),
-            3 => OpaqueClosure3(@This(), AnyContextFunc(Fn)),
-            4 => OpaqueClosure4(@This(), AnyContextFunc(Fn)),
+        pub const invoke = switch (@typeInfo(Fn).@"fn".params.len) {
+            0 => struct {
+                pub fn invoke(
+                    self: Self,
+                ) @typeInfo(Function).@"fn".return_type.? {
+                    return @as(*const AnyContextFunc(Fn), @alignCast(@ptrCast(self.closure.vtable.func)))(self.closure.captures);
+                }
+            }.invoke,
+            1 => struct {
+                pub fn invoke(
+                    self: Self,
+                    arg1: @typeInfo(Function).@"fn".params[0].type.?,
+                ) @typeInfo(Function).@"fn".return_type.? {
+                    return @as(*const AnyContextFunc(Fn), @alignCast(@ptrCast(self.closure.vtable.func)))(self.closure.captures, arg1);
+                }
+            }.invoke,
+            2 => struct {
+                pub fn invoke(
+                    self: Self,
+                    arg1: @typeInfo(Function).@"fn".params[0].type.?,
+                    arg2: @typeInfo(Function).@"fn".params[1].type.?,
+                ) @typeInfo(Function).@"fn".return_type.? {
+                    return @as(*const AnyContextFunc(Fn), @alignCast(@ptrCast(self.closure.vtable.func)))(self.closure.captures, arg1, arg2);
+                }
+            }.invoke,
+            3 => struct {
+                pub fn invoke(
+                    self: Self,
+                    arg1: @typeInfo(Function).@"fn".params[0].type.?,
+                    arg2: @typeInfo(Function).@"fn".params[1].type.?,
+                    arg3: @typeInfo(Function).@"fn".params[2].type.?,
+                ) @typeInfo(Function).@"fn".return_type.? {
+                    return @as(*const AnyContextFunc(Fn), @alignCast(@ptrCast(self.closure.vtable.func)))(self.closure.captures, arg1, arg2, arg3);
+                }
+            }.invoke,
+            4 => struct {
+                pub fn invoke(
+                    self: Self,
+                    arg1: @typeInfo(Function).@"fn".params[0].type.?,
+                    arg2: @typeInfo(Function).@"fn".params[1].type.?,
+                    arg3: @typeInfo(Function).@"fn".params[2].type.?,
+                    arg4: @typeInfo(Function).@"fn".params[3].type.?,
+                ) @typeInfo(Function).@"fn".return_type.? {
+                    return @as(*const AnyContextFunc(Fn), @alignCast(@ptrCast(self.closure.vtable.func)))(self.closure.captures, arg1, arg2, arg3, arg4);
+                }
+            }.invoke,
             else => unreachable,
         };
     };
@@ -395,8 +376,7 @@ pub fn Closure(comptime Fn: type, comptime function: Fn, comptime Captures: type
             return try .init(allocator, Captures, self.captures, function);
         }
 
-        // toOpaque()
-        pub usingnamespace blk: {
+        pub const toOpaque = blk: {
             // This needs to be in sync with OpaqueClosure.init
             const is_captures_ptr: bool = switch (@typeInfo(Captures)) {
                 .pointer => |v| v.size != .slice,
@@ -413,18 +393,17 @@ pub fn Closure(comptime Fn: type, comptime function: Fn, comptime Captures: type
                             Self.func,
                         ) catch @panic("We should not have ever reached this point. OpaqueClosure should not need an allocator here");
                     }
-                };
+                }.toOpaque;
             }
 
             break :blk struct {
                 pub fn toOpaque(self: Self, allocator: std.mem.Allocator) !OpaqueClosure(Self.Function) {
                     return .init(allocator, Captures, self.captures, Self.func);
                 }
-            };
+            }.toOpaque;
         };
 
-        // toAny()
-        pub usingnamespace blk: {
+        pub const toAny = blk: {
             const is_captures_ptr: bool = switch (@typeInfo(Captures)) {
                 .pointer => |v| v.size != .slice,
                 else => false,
@@ -435,25 +414,24 @@ pub fn Closure(comptime Fn: type, comptime function: Fn, comptime Captures: type
                     pub fn toAny(self: Self) AnyClosure {
                         return self.toOpaque().closure;
                     }
-                };
+                }.toAny;
             }
 
             break :blk struct {
                 pub fn toAny(self: Self, allocator: std.mem.Allocator) !AnyClosure {
                     return (try self.toOpaque(allocator)).closure;
                 }
-            };
+            }.toAny;
         };
 
-        // invoke()
-        pub usingnamespace switch (@typeInfo(Function).@"fn".params.len) {
+        pub const invoke = switch (@typeInfo(Function).@"fn".params.len) {
             0 => struct {
                 pub fn invoke(
                     self: Self,
                 ) @typeInfo(Function).@"fn".return_type.? {
                     return function(self.captures);
                 }
-            },
+            }.invoke,
             1 => struct {
                 pub fn invoke(
                     self: Self,
@@ -461,7 +439,7 @@ pub fn Closure(comptime Fn: type, comptime function: Fn, comptime Captures: type
                 ) @typeInfo(Function).@"fn".return_type.? {
                     return function(self.captures, arg1);
                 }
-            },
+            }.invoke,
             2 => struct {
                 pub fn invoke(
                     self: Self,
@@ -470,7 +448,7 @@ pub fn Closure(comptime Fn: type, comptime function: Fn, comptime Captures: type
                 ) @typeInfo(Function).@"fn".return_type.? {
                     return function(self.captures, arg1, arg2);
                 }
-            },
+            }.invoke,
             3 => struct {
                 pub fn invoke(
                     self: Self,
@@ -480,7 +458,7 @@ pub fn Closure(comptime Fn: type, comptime function: Fn, comptime Captures: type
                 ) @typeInfo(Function).@"fn".return_type.? {
                     return function(self.captures, arg1, arg2, arg3);
                 }
-            },
+            }.invoke,
             4 => struct {
                 pub fn invoke(
                     self: Self,
@@ -491,8 +469,8 @@ pub fn Closure(comptime Fn: type, comptime function: Fn, comptime Captures: type
                 ) @typeInfo(Function).@"fn".return_type.? {
                     return function(self.captures, arg1, arg2, arg3, arg4);
                 }
-            },
-            else => unreachable,
+            }.invoke,
+            else => @compileError("Closures currently support up to 4 arguments"),
         };
     };
 }
