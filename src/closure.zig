@@ -303,11 +303,7 @@ pub fn OpaqueClosure(comptime Fn: type) type {
             return self.closure.eql(other.closure);
         }
 
-        pub fn dupe(self: @This(), allocator: std.mem.Allocator) !@This() {
-            return .{
-                .closure = try self.closure.dupe(allocator),
-            };
-        }
+        pub const dupe = duplication.default(@This());
 
         pub fn deinit(self: @This()) void {
             self.closure.deinit();
@@ -317,7 +313,7 @@ pub fn OpaqueClosure(comptime Fn: type) type {
             0 => struct {
                 pub fn invoke(
                     self: Self,
-                ) @typeInfo(Function).@"fn".return_type.? {
+                ) Return {
                     return @as(*const AnyContextFunc(Fn), @alignCast(@ptrCast(self.closure.vtable.func)))(self.closure.captures);
                 }
             }.invoke,
@@ -325,7 +321,7 @@ pub fn OpaqueClosure(comptime Fn: type) type {
                 pub fn invoke(
                     self: Self,
                     arg1: @typeInfo(Function).@"fn".params[0].type.?,
-                ) @typeInfo(Function).@"fn".return_type.? {
+                ) Return {
                     return @as(*const AnyContextFunc(Fn), @alignCast(@ptrCast(self.closure.vtable.func)))(self.closure.captures, arg1);
                 }
             }.invoke,
@@ -334,7 +330,7 @@ pub fn OpaqueClosure(comptime Fn: type) type {
                     self: Self,
                     arg1: @typeInfo(Function).@"fn".params[0].type.?,
                     arg2: @typeInfo(Function).@"fn".params[1].type.?,
-                ) @typeInfo(Function).@"fn".return_type.? {
+                ) Return {
                     return @as(*const AnyContextFunc(Fn), @alignCast(@ptrCast(self.closure.vtable.func)))(self.closure.captures, arg1, arg2);
                 }
             }.invoke,
@@ -344,7 +340,7 @@ pub fn OpaqueClosure(comptime Fn: type) type {
                     arg1: @typeInfo(Function).@"fn".params[0].type.?,
                     arg2: @typeInfo(Function).@"fn".params[1].type.?,
                     arg3: @typeInfo(Function).@"fn".params[2].type.?,
-                ) @typeInfo(Function).@"fn".return_type.? {
+                ) Return {
                     return @as(*const AnyContextFunc(Fn), @alignCast(@ptrCast(self.closure.vtable.func)))(self.closure.captures, arg1, arg2, arg3);
                 }
             }.invoke,
@@ -355,7 +351,7 @@ pub fn OpaqueClosure(comptime Fn: type) type {
                     arg2: @typeInfo(Function).@"fn".params[1].type.?,
                     arg3: @typeInfo(Function).@"fn".params[2].type.?,
                     arg4: @typeInfo(Function).@"fn".params[3].type.?,
-                ) @typeInfo(Function).@"fn".return_type.? {
+                ) Return {
                     return @as(*const AnyContextFunc(Fn), @alignCast(@ptrCast(self.closure.vtable.func)))(self.closure.captures, arg1, arg2, arg3, arg4);
                 }
             }.invoke,
@@ -371,10 +367,6 @@ pub fn Closure(comptime Fn: type, comptime function: Fn, comptime Captures: type
         pub const Function: type = FnWithoutContext(Fn);
 
         captures: Captures,
-
-        pub fn any(self: @This(), allocator: std.mem.Allocator) !OpaqueClosure(Function) {
-            return try .init(allocator, Captures, self.captures, function);
-        }
 
         pub const toOpaque = blk: {
             // This needs to be in sync with OpaqueClosure.init
@@ -508,6 +500,132 @@ pub fn closureStruct(
     return closureFn(@field(Struct, firstDeclInStruct(Struct).name), captures);
 }
 
+fn SliceFunctionParameteres(comptime Fn: type, comptime start: comptime_int) type {
+    const fn_type = @typeInfo(Fn).@"fn";
+
+    return @Type(.{
+        .@"fn" = .{
+            .calling_convention = fn_type.calling_convention,
+            .is_generic = fn_type.is_generic,
+            .is_var_args = fn_type.is_var_args,
+            .return_type = fn_type.return_type,
+            .params = fn_type.params[start..fn_type.params.len],
+        },
+    });
+}
+
+pub fn bind(
+    allocator: std.mem.Allocator,
+    comptime function: anytype,
+    args: anytype,
+) !OpaqueClosure(SliceFunctionParameteres(@TypeOf(function), @typeInfo(@TypeOf(args)).@"struct".fields.len)) {
+    const Fn = @TypeOf(function);
+    const Args = @TypeOf(args);
+    const fn_params = @typeInfo(Fn).@"fn".params;
+    const args_len = @typeInfo(@TypeOf(args)).@"struct".fields.len;
+    const ReturnType = @typeInfo(Fn).@"fn".return_type.?;
+
+    return try .init(allocator, Args, args, switch (fn_params.len) {
+        0 => switch (args_len) {
+            0 => struct {
+                pub fn run(context: Args) ReturnType {
+                    _ = context;
+                    return function();
+                }
+            }.run,
+            else => @compileError("Specified function does not take any parameters"),
+        },
+        1 => switch (args_len) {
+            0 => struct {
+                pub fn run(context: Args, arg1: fn_params[0].type.?) ReturnType {
+                    _ = context;
+                    return function(arg1);
+                }
+            }.run,
+            1 => struct {
+                pub fn run(context: Args) ReturnType {
+                    return function(context[0]);
+                }
+            }.run,
+            else => @compileError("Specified function takes only 1 parameter"),
+        },
+        2 => switch (args_len) {
+            0 => struct {
+                pub fn run(context: Args, arg1: fn_params[0].type.?, arg2: fn_params[1].type.?) ReturnType {
+                    _ = context;
+                    return function(arg1, arg2);
+                }
+            }.run,
+            1 => struct {
+                pub fn run(context: Args, arg2: fn_params[1].type.?) ReturnType {
+                    return function(context[0], arg2);
+                }
+            }.run,
+            2 => struct {
+                pub fn run(context: Args) ReturnType {
+                    return function(context[0], context[1]);
+                }
+            }.run,
+            else => @compileError("Specified function takes only 2 parameters"),
+        },
+        3 => switch (args_len) {
+            0 => struct {
+                pub fn run(context: Args, arg1: fn_params[0].type.?, arg2: fn_params[1].type.?, arg3: fn_params[2].type.?) ReturnType {
+                    _ = context;
+                    return function(arg1, arg2, arg3);
+                }
+            }.run,
+            1 => struct {
+                pub fn run(context: Args, arg2: fn_params[1].type.?, arg3: fn_params[2].type.?) ReturnType {
+                    return function(context[0], arg2, arg3);
+                }
+            }.run,
+            2 => struct {
+                pub fn run(context: Args, arg3: fn_params[2].type.?) ReturnType {
+                    return function(context[0], context[1], arg3);
+                }
+            }.run,
+            3 => struct {
+                pub fn run(context: Args) ReturnType {
+                    return function(context[0], context[1], context[2]);
+                }
+            }.run,
+            else => @compileError("Specified function takes only 3 parameters"),
+        },
+        4 => switch (args_len) {
+            0 => struct {
+                pub fn run(context: Args, arg1: fn_params[0].type.?, arg2: fn_params[1].type.?, arg3: fn_params[2].type.?, arg4: fn_params[3].type.?) ReturnType {
+                    _ = context;
+                    return function(arg1, arg2, arg3, arg4);
+                }
+            }.run,
+            1 => struct {
+                pub fn run(context: Args, arg2: fn_params[1].type.?, arg3: fn_params[2].type.?, arg4: fn_params[3].type.?) ReturnType {
+                    return function(context[0], arg2, arg3, arg4);
+                }
+            }.run,
+            2 => struct {
+                pub fn run(context: Args, arg3: fn_params[2].type.?, arg4: fn_params[3].type.?) ReturnType {
+                    return function(context[0], context[1], arg3, arg4);
+                }
+            }.run,
+            3 => struct {
+                pub fn run(context: Args, arg4: fn_params[3].type.?) ReturnType {
+                    return function(context[0], context[1], context[2], arg4);
+                }
+            }.run,
+            4 => struct {
+                pub fn run(context: Args) ReturnType {
+                    return function(context[0], context[1], context[2], context[3]);
+                }
+            }.run,
+            else => @compileError("Specified function takes only 4 parameters"),
+        },
+        else => @compileError("Closures currently support up to 4 arguments"),
+    });
+}
+
+// Tests
 test "OpaqueClosure without captures and arguments created manually" {
     const Captures = struct {};
 
@@ -709,4 +827,23 @@ test "Eql closure with a pointer inside" {
     defer any_closure2.deinit();
 
     try std.testing.expect(any_closure.eql(any_closure2));
+}
+
+test "Bind parameters to a function" {
+    const Test = struct {
+        pub fn doSomething(a: u32, b: []const u8) anyerror!void {
+            try std.testing.expectEqual(20, a);
+            try std.testing.expectEqualStrings("test1234", b);
+        }
+    };
+
+    const bound_function = try bind(std.testing.allocator, Test.doSomething, .{ 20, "test1234" });
+    defer bound_function.deinit();
+
+    try bound_function.invoke();
+
+    const bound_function_partial = try bind(std.testing.allocator, Test.doSomething, .{20});
+    defer bound_function_partial.deinit();
+
+    try bound_function_partial.invoke("test1234");
 }
