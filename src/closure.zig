@@ -377,20 +377,20 @@ pub fn Closure(comptime Fn: type, comptime function: Fn, comptime Captures: type
 
             if (is_captures_ptr or Captures == void) {
                 break :blk struct {
-                    pub fn toOpaque(self: Self) OpaqueClosure(Self.Function) {
-                        return OpaqueClosure(Self.Function).init(
+                    pub fn toOpaque(self: Self) OpaqueClosure(Function) {
+                        return OpaqueClosure(Function).init(
                             null,
                             Captures,
                             self.captures,
-                            Self.func,
+                            function,
                         ) catch @panic("We should not have ever reached this point. OpaqueClosure should not need an allocator here");
                     }
                 }.toOpaque;
             }
 
             break :blk struct {
-                pub fn toOpaque(self: Self, allocator: std.mem.Allocator) !OpaqueClosure(Self.Function) {
-                    return .init(allocator, Captures, self.captures, Self.func);
+                pub fn toOpaque(self: Self, allocator: std.mem.Allocator) !OpaqueClosure(Function) {
+                    return .init(allocator, Captures, self.captures, function);
                 }
             }.toOpaque;
         };
@@ -515,114 +515,169 @@ fn SliceFunctionParameteres(comptime Fn: type, comptime start: comptime_int) typ
 }
 
 pub fn bind(
-    allocator: std.mem.Allocator,
     comptime function: anytype,
     args: anytype,
-) !OpaqueClosure(SliceFunctionParameteres(@TypeOf(function), @typeInfo(@TypeOf(args)).@"struct".fields.len)) {
-    const Fn = @TypeOf(function);
-    const Args = @TypeOf(args);
-    const fn_params = @typeInfo(Fn).@"fn".params;
-    const args_len = @typeInfo(@TypeOf(args)).@"struct".fields.len;
-    const ReturnType = @typeInfo(Fn).@"fn".return_type.?;
+) Closure(
+    FnWithContext(SliceFunctionParameteres(@TypeOf(function), @typeInfo(@TypeOf(args)).@"struct".fields.len), @TypeOf(args)),
+    blk: {
+        const Fn = @TypeOf(function);
+        const Args = @TypeOf(args);
+        const fn_params = @typeInfo(Fn).@"fn".params;
+        const args_len = @typeInfo(@TypeOf(args)).@"struct".fields.len;
+        const ReturnType = @typeInfo(Fn).@"fn".return_type.?;
 
-    return try .init(allocator, Args, args, switch (fn_params.len) {
-        0 => switch (args_len) {
-            0 => struct {
-                pub fn run(context: Args) ReturnType {
-                    _ = context;
-                    return function();
-                }
-            }.run,
-            else => @compileError("Specified function does not take any parameters"),
-        },
-        1 => switch (args_len) {
-            0 => struct {
-                pub fn run(context: Args, arg1: fn_params[0].type.?) ReturnType {
-                    _ = context;
-                    return function(arg1);
-                }
-            }.run,
-            1 => struct {
-                pub fn run(context: Args) ReturnType {
-                    return function(context[0]);
-                }
-            }.run,
-            else => @compileError("Specified function takes only 1 parameter"),
-        },
-        2 => switch (args_len) {
-            0 => struct {
-                pub fn run(context: Args, arg1: fn_params[0].type.?, arg2: fn_params[1].type.?) ReturnType {
-                    _ = context;
-                    return function(arg1, arg2);
-                }
-            }.run,
-            1 => struct {
-                pub fn run(context: Args, arg2: fn_params[1].type.?) ReturnType {
-                    return function(context[0], arg2);
-                }
-            }.run,
-            2 => struct {
-                pub fn run(context: Args) ReturnType {
-                    return function(context[0], context[1]);
-                }
-            }.run,
-            else => @compileError("Specified function takes only 2 parameters"),
-        },
-        3 => switch (args_len) {
-            0 => struct {
-                pub fn run(context: Args, arg1: fn_params[0].type.?, arg2: fn_params[1].type.?, arg3: fn_params[2].type.?) ReturnType {
-                    _ = context;
-                    return function(arg1, arg2, arg3);
-                }
-            }.run,
-            1 => struct {
-                pub fn run(context: Args, arg2: fn_params[1].type.?, arg3: fn_params[2].type.?) ReturnType {
-                    return function(context[0], arg2, arg3);
-                }
-            }.run,
-            2 => struct {
-                pub fn run(context: Args, arg3: fn_params[2].type.?) ReturnType {
-                    return function(context[0], context[1], arg3);
-                }
-            }.run,
-            3 => struct {
-                pub fn run(context: Args) ReturnType {
-                    return function(context[0], context[1], context[2]);
-                }
-            }.run,
-            else => @compileError("Specified function takes only 3 parameters"),
-        },
-        4 => switch (args_len) {
-            0 => struct {
-                pub fn run(context: Args, arg1: fn_params[0].type.?, arg2: fn_params[1].type.?, arg3: fn_params[2].type.?, arg4: fn_params[3].type.?) ReturnType {
-                    _ = context;
-                    return function(arg1, arg2, arg3, arg4);
-                }
-            }.run,
-            1 => struct {
-                pub fn run(context: Args, arg2: fn_params[1].type.?, arg3: fn_params[2].type.?, arg4: fn_params[3].type.?) ReturnType {
-                    return function(context[0], arg2, arg3, arg4);
-                }
-            }.run,
-            2 => struct {
-                pub fn run(context: Args, arg3: fn_params[2].type.?, arg4: fn_params[3].type.?) ReturnType {
-                    return function(context[0], context[1], arg3, arg4);
-                }
-            }.run,
-            3 => struct {
-                pub fn run(context: Args, arg4: fn_params[3].type.?) ReturnType {
-                    return function(context[0], context[1], context[2], arg4);
-                }
-            }.run,
-            4 => struct {
-                pub fn run(context: Args) ReturnType {
-                    return function(context[0], context[1], context[2], context[3]);
-                }
-            }.run,
-            else => @compileError("Specified function takes only 4 parameters"),
-        },
-        else => @compileError("Closures currently support up to 4 arguments"),
-    });
+        break :blk switch (fn_params.len) {
+            0 => switch (args_len) {
+                0 => struct {
+                    pub fn run(
+                        context: Args,
+                    ) ReturnType {
+                        _ = context;
+                        return function();
+                    }
+                }.run,
+                else => @compileError("Specified function does not take any parameters"),
+            },
+            1 => switch (args_len) {
+                0 => struct {
+                    pub fn run(
+                        context: Args,
+                        arg1: fn_params[0].type.?,
+                    ) ReturnType {
+                        _ = context;
+                        return function(arg1);
+                    }
+                }.run,
+                1 => struct {
+                    pub fn run(
+                        context: Args,
+                    ) ReturnType {
+                        return function(context[0]);
+                    }
+                }.run,
+                else => @compileError("Specified function takes only 1 parameter"),
+            },
+            2 => switch (args_len) {
+                0 => struct {
+                    pub fn run(
+                        context: Args,
+                        arg1: fn_params[0].type.?,
+                        arg2: fn_params[1].type.?,
+                    ) ReturnType {
+                        _ = context;
+                        return function(arg1, arg2);
+                    }
+                }.run,
+                1 => struct {
+                    pub fn run(
+                        context: Args,
+                        arg2: fn_params[1].type.?,
+                    ) ReturnType {
+                        return function(context[0], arg2);
+                    }
+                }.run,
+                2 => struct {
+                    pub fn run(
+                        context: Args,
+                    ) ReturnType {
+                        return function(context[0], context[1]);
+                    }
+                }.run,
+                else => @compileError("Specified function takes only 2 parameters"),
+            },
+            3 => switch (args_len) {
+                0 => struct {
+                    pub fn run(
+                        context: Args,
+                        arg1: fn_params[0].type.?,
+                        arg2: fn_params[1].type.?,
+                        arg3: fn_params[2].type.?,
+                    ) ReturnType {
+                        _ = context;
+                        return function(arg1, arg2, arg3);
+                    }
+                }.run,
+                1 => struct {
+                    pub fn run(
+                        context: Args,
+                        arg2: fn_params[1].type.?,
+                        arg3: fn_params[2].type.?,
+                    ) ReturnType {
+                        return function(context[0], arg2, arg3);
+                    }
+                }.run,
+                2 => struct {
+                    pub fn run(
+                        context: Args,
+                        arg3: fn_params[2].type.?,
+                    ) ReturnType {
+                        return function(context[0], context[1], arg3);
+                    }
+                }.run,
+                3 => struct {
+                    pub fn run(
+                        context: Args,
+                    ) ReturnType {
+                        return function(context[0], context[1], context[2]);
+                    }
+                }.run,
+                else => @compileError("Specified function takes only 3 parameters"),
+            },
+            4 => switch (args_len) {
+                0 => struct {
+                    pub fn run(
+                        context: Args,
+                        arg1: fn_params[0].type.?,
+                        arg2: fn_params[1].type.?,
+                        arg3: fn_params[2].type.?,
+                        arg4: fn_params[3].type.?,
+                    ) ReturnType {
+                        _ = context;
+                        return function(arg1, arg2, arg3, arg4);
+                    }
+                }.run,
+                1 => struct {
+                    pub fn run(
+                        context: Args,
+                        arg2: fn_params[1].type.?,
+                        arg3: fn_params[2].type.?,
+                        arg4: fn_params[3].type.?,
+                    ) ReturnType {
+                        return function(context[0], arg2, arg3, arg4);
+                    }
+                }.run,
+                2 => struct {
+                    pub fn run(
+                        context: Args,
+                        arg3: fn_params[2].type.?,
+                        arg4: fn_params[3].type.?,
+                    ) ReturnType {
+                        return function(context[0], context[1], arg3, arg4);
+                    }
+                }.run,
+                3 => struct {
+                    pub fn run(
+                        context: Args,
+                        arg4: fn_params[3].type.?,
+                    ) ReturnType {
+                        return function(context[0], context[1], context[2], arg4);
+                    }
+                }.run,
+                4 => struct {
+                    pub fn run(
+                        context: Args,
+                    ) ReturnType {
+                        return function(context[0], context[1], context[2], context[3]);
+                    }
+                }.run,
+                else => @compileError("Specified function takes only 4 parameters"),
+            },
+            else => @compileError("Closures currently support up to 4 arguments"),
+        };
+    },
+    @TypeOf(args),
+) {
+    return .{ .captures = args };
 }
 
 // Tests
@@ -837,12 +892,11 @@ test "Bind parameters to a function" {
         }
     };
 
-    const bound_function = try bind(std.testing.allocator, Test.doSomething, .{ 20, "test1234" });
-    defer bound_function.deinit();
+    const bound_function = bind(Test.doSomething, .{ 20, "test1234" });
 
     try bound_function.invoke();
 
-    const bound_function_partial = try bind(std.testing.allocator, Test.doSomething, .{20});
+    const bound_function_partial = try bind(Test.doSomething, .{20}).toOpaque(std.testing.allocator);
     defer bound_function_partial.deinit();
 
     try bound_function_partial.invoke("test1234");
