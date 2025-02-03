@@ -1,6 +1,29 @@
 # zig-xtra
 
-Library with helpers for implementing higher level concepts and utils.
+Library with helpers for implementing higher level concepts and utils. This library supports only zig in version 0.14 (currently nightly).
+
+## Quick start
+
+Install with
+```
+zig fetch --save "git+https://github.com/adamuso/zig-xtra#master"
+```
+
+Add to `build.zig`
+```zig
+const zig_xtra = b.dependency("zig-xtra", .{
+    .target = target,
+    .optimize = optimize,
+});
+
+exe_mod.addImport("zig-xtra", zig_xtra.module("zig-xtra"));
+```
+
+Use in code
+```zig
+const xtra = @import("zig-xtra");
+// ...
+```
 
 ## Roadmap
 
