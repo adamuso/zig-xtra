@@ -307,8 +307,8 @@ pub fn OpaqueClosure(comptime Fn: type) type {
         pub fn fromFn(
             comptime function: anytype,
             captures: @typeInfo(@TypeOf(function)).@"fn".params[0].type.?,
-        ) @TypeOf(closure(@TypeOf(function), function, captures).toOpaque()) {
-            return closure(@TypeOf(function), function, captures).toOpaque();
+        ) @TypeOf(initClosure(@TypeOf(function), function, captures).toOpaque()) {
+            return initClosure(@TypeOf(function), function, captures).toOpaque();
         }
 
         closure: AnyClosure,
@@ -481,7 +481,7 @@ pub fn Closure(comptime Fn: type, comptime function: Fn, comptime Captures: type
     };
 }
 
-pub fn closure(
+pub fn init(
     comptime Fn: type,
     comptime function: Fn,
     captures: @typeInfo(Fn).@"fn".params[0].type.?,
@@ -489,11 +489,13 @@ pub fn closure(
     return .{ .captures = captures };
 }
 
-pub fn closureFn(
+const initClosure = init;
+
+pub fn fromFn(
     comptime function: anytype,
     captures: @typeInfo(@TypeOf(function)).@"fn".params[0].type.?,
-) @TypeOf(closure(@TypeOf(function), function, captures)) {
-    return closure(@TypeOf(function), function, captures);
+) @TypeOf(init(@TypeOf(function), function, captures)) {
+    return init(@TypeOf(function), function, captures);
 }
 
 inline fn firstDeclInStruct(comptime Struct: type) struct { type: type, name: [:0]const u8 } {
@@ -504,39 +506,14 @@ inline fn firstDeclInStruct(comptime Struct: type) struct { type: type, name: [:
     };
 }
 
-pub fn closureStruct(
-    comptime Struct: type,
-    captures: @typeInfo(firstDeclInStruct(Struct).type).@"fn".params[0].type.?,
-) @TypeOf(closureFn(
-    @field(Struct, firstDeclInStruct(Struct).name),
-    captures,
-)) {
-    return closureFn(@field(Struct, firstDeclInStruct(Struct).name), captures);
-}
-
-pub fn init(
-    comptime Fn: type,
-    comptime function: Fn,
-    captures: @typeInfo(Fn).@"fn".params[0].type.?,
-) Closure(Fn, function, @TypeOf(captures)) {
-    return .{ .captures = captures };
-}
-
-pub fn fromFn(
-    comptime function: anytype,
-    captures: @typeInfo(@TypeOf(function)).@"fn".params[0].type.?,
-) @TypeOf(closure(@TypeOf(function), function, captures)) {
-    return closure(@TypeOf(function), function, captures);
-}
-
 pub fn fromStruct(
     comptime Struct: type,
     captures: @typeInfo(firstDeclInStruct(Struct).type).@"fn".params[0].type.?,
-) @TypeOf(closureFn(
+) @TypeOf(fromFn(
     @field(Struct, firstDeclInStruct(Struct).name),
     captures,
 )) {
-    return closureFn(@field(Struct, firstDeclInStruct(Struct).name), captures);
+    return fromFn(@field(Struct, firstDeclInStruct(Struct).name), captures);
 }
 
 pub fn bind(
@@ -731,7 +708,7 @@ test "OpaqueClosure without captures and with argument created manually" {
 
 test "Closure with one capture" {
     const a: usize = 10;
-    const closure_1 = closureFn(struct {
+    const closure_1 = fromFn(struct {
         fn x(captures: struct { usize }) !void {
             try std.testing.expectEqual(10, captures[0]);
         }
@@ -744,7 +721,7 @@ test "Closure with two captures" {
     const a: usize = 10;
     const b: usize = 20;
 
-    const closure_1 = closureFn(struct {
+    const closure_1 = fromFn(struct {
         fn x(captures: struct { usize, usize }) anyerror!void {
             try std.testing.expectEqual(30, captures[0] + captures[1]);
         }
@@ -761,7 +738,7 @@ test "Closure with two captures and an arguments" {
     const b: usize = 20;
     const c: usize = 30;
 
-    const closure_1 = closureFn(struct {
+    const closure_1 = fromFn(struct {
         fn x(captures: struct { usize, usize }, arg: usize) anyerror!void {
             const c_a, const c_b = captures;
 
@@ -777,7 +754,7 @@ test "Closure with two captures and an arguments" {
 
 test "Closure in standard library function std.mem.sort" {
     var numbers: [8]i32 = .{ 13, 6, 4, 7, 9, 3, 2, 5 };
-    const sort_ascending = closureFn(struct {
+    const sort_ascending = fromFn(struct {
         fn sort(_: void, a: i32, b: i32) bool {
             return a < b;
         }
@@ -790,7 +767,7 @@ test "Closure in standard library function std.mem.sort" {
 
 test "OpaqueClosure in standard library function std.mem.sort" {
     var numbers: [8]i32 = .{ 13, 6, 4, 7, 9, 3, 2, 5 };
-    const sort_ascending = closureFn(struct {
+    const sort_ascending = fromFn(struct {
         fn sort(_: void, a: i32, b: i32) bool {
             return a < b;
         }
@@ -803,7 +780,7 @@ test "OpaqueClosure in standard library function std.mem.sort" {
 
 test "AnyClosure allow blindly invoke when closure has no arguments and returns void" {
     var result = false;
-    const opaque_closure = closureFn(struct {
+    const opaque_closure = fromFn(struct {
         fn run(r: *bool) void {
             r.* = true;
         }
@@ -820,7 +797,7 @@ test "AnyClosure allow blindly invoke when closure has no arguments and returns 
 }
 
 test "Closure from struct" {
-    const c = closureStruct(struct {
+    const c = fromStruct(struct {
         pub fn run(_: void) void {}
     }, {});
 
@@ -832,7 +809,7 @@ test "AnyClosure converted to OpaqueClosure and tag equality" {
     try std.testing.expect(AnyClosure.tag(fn () void) != AnyClosure.tag(fn () i32));
     try std.testing.expect(AnyClosure.tag(fn () i32) == AnyClosure.tag(fn () i32));
 
-    const opaque_closure = try closureStruct(struct {
+    const opaque_closure = try fromStruct(struct {
         pub fn run(v: i32) i32 {
             return v;
         }
@@ -862,7 +839,7 @@ test "Void address is always the same" {
 
 test "Closure to AnyClosure conversion" {
     var result = false;
-    const any_closure = closureFn(struct {
+    const any_closure = fromFn(struct {
         fn run(r: *bool) void {
             r.* = true;
         }
@@ -881,7 +858,7 @@ test "Closure destroy tuple with pointer" {
     const x = try std.testing.allocator.create(u32);
     defer std.testing.allocator.destroy(x);
 
-    const any_closure = try closureStruct(struct {
+    const any_closure = try fromStruct(struct {
         pub fn run(_: @TypeOf(.{x})) void {}
     }, .{x}).toOpaque(std.testing.allocator);
 
@@ -891,7 +868,7 @@ test "Closure destroy tuple with pointer" {
 test "Eql closure with a pointer inside" {
     const Internal = struct {
         fn create(x: *u32) !OpaqueClosure(fn () void) {
-            const any_closure = try closureStruct(struct {
+            const any_closure = try fromStruct(struct {
                 pub fn run(_: @TypeOf(.{x})) void {}
             }, .{x}).toOpaque(std.testing.allocator);
             return any_closure;
