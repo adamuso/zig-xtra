@@ -37,6 +37,20 @@ fn FnWithoutContext(comptime Fn: type) type {
     }
 }
 
+fn SliceFunctionParameteres(comptime Fn: type, comptime start: comptime_int) type {
+    const fn_type = @typeInfo(Fn).@"fn";
+
+    return @Type(.{
+        .@"fn" = .{
+            .calling_convention = fn_type.calling_convention,
+            .is_generic = fn_type.is_generic,
+            .is_var_args = fn_type.is_var_args,
+            .return_type = fn_type.return_type,
+            .params = fn_type.params[start..fn_type.params.len],
+        },
+    });
+}
+
 fn AnyContextFunc(comptime Fn: type) type {
     return FnWithContext(Fn, *anyopaque);
 }
@@ -500,18 +514,29 @@ pub fn closureStruct(
     return closureFn(@field(Struct, firstDeclInStruct(Struct).name), captures);
 }
 
-fn SliceFunctionParameteres(comptime Fn: type, comptime start: comptime_int) type {
-    const fn_type = @typeInfo(Fn).@"fn";
+pub fn init(
+    comptime Fn: type,
+    comptime function: Fn,
+    captures: @typeInfo(Fn).@"fn".params[0].type.?,
+) Closure(Fn, function, @TypeOf(captures)) {
+    return .{ .captures = captures };
+}
 
-    return @Type(.{
-        .@"fn" = .{
-            .calling_convention = fn_type.calling_convention,
-            .is_generic = fn_type.is_generic,
-            .is_var_args = fn_type.is_var_args,
-            .return_type = fn_type.return_type,
-            .params = fn_type.params[start..fn_type.params.len],
-        },
-    });
+pub fn fromFn(
+    comptime function: anytype,
+    captures: @typeInfo(@TypeOf(function)).@"fn".params[0].type.?,
+) @TypeOf(closure(@TypeOf(function), function, captures)) {
+    return closure(@TypeOf(function), function, captures);
+}
+
+pub fn fromStruct(
+    comptime Struct: type,
+    captures: @typeInfo(firstDeclInStruct(Struct).type).@"fn".params[0].type.?,
+) @TypeOf(closureFn(
+    @field(Struct, firstDeclInStruct(Struct).name),
+    captures,
+)) {
+    return closureFn(@field(Struct, firstDeclInStruct(Struct).name), captures);
 }
 
 pub fn bind(

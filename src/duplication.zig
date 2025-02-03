@@ -81,6 +81,7 @@ pub fn dupeFn(comptime T: type) Dupe(T) {
     }.dupeImpl;
 }
 
+/// Returns a function that match dupe signature, but will error when it is used for duping
 pub fn noDupe(comptime T: type) Dupe(T) {
     return &struct {
         fn do(_: std.mem.Allocator, _: T) Error!*T {
@@ -89,10 +90,12 @@ pub fn noDupe(comptime T: type) Dupe(T) {
     }.do;
 }
 
+/// Creates a duplicate of passed pointer and uses `dupe` function to duplicate pointed contents
 pub fn dupePtr(comptime T: type, allocator: std.mem.Allocator, value: *const T) !*T {
     return @alignCast(@ptrCast(try dupePtrFn(T)(allocator, value)));
 }
 
+/// Returns a function which can be used to dupe a pointer using an allocator for specified type.
 pub fn dupePtrFn(comptime T: type) DupePtr {
     return struct {
         fn dupePtrImpl(allocator: std.mem.Allocator, value: *const anyopaque) !*anyopaque {
@@ -103,14 +106,17 @@ pub fn dupePtrFn(comptime T: type) DupePtr {
     }.dupePtrImpl;
 }
 
+/// Function that match dupe pointer signature, but will error when it is used for duping
 pub fn noDupePtr(_: std.mem.Allocator, _: *const anyopaque) !*anyopaque {
     return Error.DupeIsNotSupported;
 }
 
+/// Creates a duplicate of passed slice and uses `dupe` function to duplicate all of the slice items
 pub fn dupeSlice(comptime T: type, allocator: std.mem.Allocator, value: []const T) ![]T {
     return try dupeSliceFn(T)(allocator, value);
 }
 
+/// Returns a function which can be used to dupe a slice using an allocator for specified type.
 pub fn dupeSliceFn(comptime T: type) DupeSlice(T) {
     return struct {
         fn dupeSliceImpl(allocator: std.mem.Allocator, value: []const T) ![]T {
@@ -131,10 +137,22 @@ pub fn dupeSliceFn(comptime T: type) DupeSlice(T) {
     }.dupeSliceImpl;
 }
 
+/// Function that match dupe slice signature, but will error when it is used for duping
 pub fn noDupeSlice(_: std.mem.Allocator, _: []const anyopaque) ![]anyopaque {
     return Error.DupeIsNotSupported;
 }
 
+/// Provides a function that is a defualt implementation of duplication for a specified type.
+/// Currently only supported type is a struct. This will generate a function which iterates over
+/// all fields inside a struct and duplicate them using `dupe` function.
+///
+/// Example usage:
+/// ```zig
+/// pub const dupe = xtra.duplication.default(@This());
+/// ```
+///
+/// To implement custom duping instead, create a `dupe` member function with an `allocator` parameter
+/// returning `!@This()`.
 pub fn default(comptime Self: type) fn (self: Self, allocator: std.mem.Allocator) anyerror!Self {
     return struct {
         fn do(self: Self, allocator: std.mem.Allocator) !Self {

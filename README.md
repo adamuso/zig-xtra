@@ -6,8 +6,8 @@ Library with helpers for implementing higher level concepts and utils.
 
 - [x] Deinitialization pattern
 - [x] Duplication pattern
+- [x] Closures
 - [ ] Any type
-- [ ] Closures
 - [ ] Iterator
 - [ ] Enumerables (like C#)
 - [ ] Equality pattern
@@ -19,7 +19,7 @@ Library with helpers for implementing higher level concepts and utils.
 `raii` allows for automatic and hierarchical deinitialization of the objects known from C++ destructors. Using `raii` when
 `deinit` is called we can automatically iterate through each field of the struct and deinitialize it recursively.
 
-Check [raii example](examples/raii-example.zig).
+For full example check [raii example](examples/raii-example.zig).
 
 ```zig
 
@@ -27,15 +27,7 @@ const Bar = struct {
     allocator: std.mem.Allocator,
     bar_data: *u32,
 
-    fn init(allocator: std.mem.Allocator) !Bar {
-        const data = try allocator.create(u32);
-        data.* = 10;
-
-        return .{
-            .allocator = allocator,
-            .bar_data = data,
-        };
-    }
+    // ... initialization
 
     // Using default implementation for deinit
     pub const deinit = xtra.raii.default(@This(), .{"bar_data"});
@@ -45,15 +37,7 @@ const Foo = struct {
     bar: Bar,
     foo_data: *u32,
 
-    fn init(allocator: std.mem.Allocator) !Foo {
-        const data = try allocator.create(u32);
-        data.* = 20;
-
-        return .{
-            .bar = try Bar.init(allocator),
-            .foo_data = data,
-        };
-    }
+    // ... initialization
 
     // Custom implementation for deinit, always declare deinit as pub
     pub fn deinit(self: *Foo, allocator: std.mem.Allocator) void {
@@ -77,7 +61,7 @@ test {
 
 `duplication` allows for automatic object deep cloning and getting duping functions pointers for dynamic generic dispatching.
 
-Check [duplication example](examples/duplication-example.zig).
+For full example check [duplication example](examples/duplication-example.zig).
 
 ```zig
 const std = @import("std");
@@ -87,34 +71,17 @@ const Bar = struct {
     allocator: std.mem.Allocator,
     bar_data: *u32,
 
-    fn init(allocator: std.mem.Allocator, value: u32) !Bar {
-        const data = try allocator.create(u32);
-        data.* = value;
-
-        return .{
-            .allocator = allocator,
-            .bar_data = data,
-        };
-    }
+    // ... initialization, deinitialization
 
     // Using dupe default implementation
     pub const dupe = xtra.duplication.default(@This());
-    pub const deinit = xtra.raii.default(@This(), .{"bar_data"});
 };
 
 const Foo = struct {
     bar: Bar,
     foo_data: *u32,
 
-    fn init(allocator: std.mem.Allocator, value: u32) !Foo {
-        const data = try allocator.create(u32);
-        data.* = value;
-
-        return .{
-            .bar = try Bar.init(allocator, value * 2),
-            .foo_data = data,
-        };
-    }
+    // ... initialization, deinitialization
 
     // Creating custom dupe implementation
     pub fn dupe(self: Foo, allocator: std.mem.Allocator) !Foo {
@@ -123,8 +90,6 @@ const Foo = struct {
             .foo_data = try xtra.duplication.dupe(*u32, allocator, self.foo_data),
         };
     }
-
-    pub const deinit = xtra.raii.defaultWithoutAllocator(@This(), .{"foo_data"});
 };
 
 test {
@@ -140,6 +105,67 @@ test {
     // No memory leaks
 }
 ```
+## Closures
+
+Closures allow for storing a function with captures for later. Closures try to mimic lambda functions
+created in place where possible.
+
+For full example check [closure example](examples/closure-example.zig) and for more check [tests for closure](src/closure.zig) implementation.
+
+```zig
+const std = @import("std");
+const xtra = @import("zig-xtra");
+
+fn bar(param: u32) u32 {
+    return param * 2;
+}
+
+test {
+    // Parameter binding
+    const bound_bar = xtra.closure.bind(bar, .{10});
+
+    try std.testing.expectEqual(20, bound_bar.invoke());
+}
+
+test {
+    // Creating closures in place
+    var value: u32 = 0;
+
+    const closure = xtra.closure.fromFn(struct {
+        fn run(context: *u32) void {
+            context.* += 1;
+        }
+    }.run, &value);
+
+    closure.invoke();
+
+    try std.testing.expectEqual(1, value);
+}
+
+test {
+    // Saving a closure for later
+
+    var value: u32 = 5;
+
+    // Closures created this way cannot be stored because they have complex typw
+    const closure = xtra.closure.fromFn(struct {
+        fn run(context: *u32, a: u32) void {
+            context.* += a;
+        }
+    }.run, &value);
+
+    // For storing closure we can use more friendly type OpaqueClosure (allocated on the heap
+    // if needed, opaque closure have an optimalization when captures are void or simple pointer
+    // then opaque closure does not need to use heap for its storage). OpaqueClosure is a simple
+    // type that can be specified by hand in contrast to Closure which needs whole function body
+    // to declare its type.
+    const stored_closure: xtra.closure.OpaqueClosure(fn (u32) void) = closure.toOpaque();
+
+    stored_closure.invoke(10);
+
+    try std.testing.expectEqual(15, value);
+}
+```
 
 ## Any type
 
@@ -149,6 +175,3 @@ TODO
 
 TODO
 
-## Closures
-
-TODO
