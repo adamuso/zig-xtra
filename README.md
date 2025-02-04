@@ -29,11 +29,12 @@ const xtra = @import("zig-xtra");
 
 - [x] Deinitialization pattern
 - [x] Duplication pattern
+- [x] Equality pattern
 - [x] Closures
 - [ ] Any type
 - [ ] Iterator
 - [ ] Enumerables (like C#)
-- [ ] Equality pattern
+- [ ] Deinitialization, duplication and equality should be able to generate default functions for enums and tagged unions
 - [ ] More compile time checks and errors
 - [ ] Naming: Is `raii` a good name?
 
@@ -131,7 +132,8 @@ test {
 
 ## `eql` pattern
 
-`equality` allows for automatic deep equality check using `eql` member functions.
+`equality` allows for automatic deep equality check using `eql` member functions. This can be more useful than `std.meta.eql` because it
+allows for custom equality check when user define `eql` function in struct.
 
 For full example check [equality example](examples/equality-example.zig).
 
@@ -222,7 +224,7 @@ test {
 
     var value: u32 = 5;
 
-    // Closures created this way cannot be stored because they have complex typw
+    // Closures created this way cannot be stored because they have complex type
     const closure = xtra.closure.fromFn(struct {
         fn run(context: *u32, a: u32) void {
             context.* += a;

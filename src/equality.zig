@@ -75,7 +75,7 @@ pub fn eqlFn(comptime T: type) Eql(T) {
     }.eqlImpl;
 }
 
-pub fn neverEql(comptime T: type) Eql(T) {
+pub fn neverEqlFn(comptime T: type) Eql(T) {
     return &struct {
         fn eqlImpl(_: std.mem.Allocator, _: T) bool {
             return false;
@@ -83,7 +83,7 @@ pub fn neverEql(comptime T: type) Eql(T) {
     }.eqlImpl;
 }
 
-pub fn alwaysEql(comptime T: type) Eql(T) {
+pub fn alwaysEqlFn(comptime T: type) Eql(T) {
     return &struct {
         fn eqlImpl(_: std.mem.Allocator, _: T) bool {
             return true;
