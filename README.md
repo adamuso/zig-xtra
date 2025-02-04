@@ -128,6 +128,58 @@ test {
     // No memory leaks
 }
 ```
+
+## `eql` pattern
+
+`equality` allows for automatic deep equality check using `eql` member functions.
+
+For full example check [equality example](examples/equality-example.zig).
+
+```zig
+const std = @import("std");
+const xtra = @import("zig-xtra");
+
+const Bar = struct {
+    bar_data: u32,
+
+    // ... initialization
+
+    // Using eql default implementation
+    pub const eql = xtra.equality.default(@This());
+};
+
+const Foo = struct {
+    bar: Bar,
+    foo_data: *u32,
+
+    // ... initialization, deinitialization
+
+    // Creating custom dupe implementation
+    pub fn eql(self: Foo, other: Foo) bool {
+        return self.bar.eql(other.bar) and self.foo_data.* == other.foo_data.*;
+        // return self.bar.eql(other.bar) and xtra.equality.eql(*u32, self.foo_data, other.foo_data);
+    }
+};
+
+test {
+    var foo: Foo = try Foo.init(std.testing.allocator, 20);
+    defer foo.deinit(std.testing.allocator);
+
+    var foo2 = try Foo.init(std.testing.allocator, 40);
+    defer foo2.deinit(std.testing.allocator);
+
+    var foo3 = try Foo.init(std.testing.allocator, 20);
+    defer foo3.deinit(std.testing.allocator);
+
+    try std.testing.expect(!foo.eql(foo2));
+    try std.testing.expect(!foo2.eql(foo3));
+    try std.testing.expect(foo.eql(foo3));
+    try std.testing.expect(!xtra.equality.eql(Foo, foo, foo2));
+    try std.testing.expect(!xtra.equality.eql(Foo, foo2, foo3));
+    try std.testing.expect(xtra.equality.eql(Foo, foo, foo3));
+}
+```
+
 ## Closures
 
 Closures allow for storing a function with captures for later. Closures try to mimic lambda functions
@@ -191,10 +243,6 @@ test {
 ```
 
 ## Any type
-
-TODO
-
-## `eql` pattern
 
 TODO
 

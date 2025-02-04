@@ -106,3 +106,28 @@ pub fn opaqueNeverEql(_: *const anyopaque, _: *const anyopaque) bool {
 pub fn opaqueAlwaysEql(_: *const anyopaque, _: *const anyopaque) bool {
     return true;
 }
+
+/// Provides a function that is a defualt implementation of equality for a specified type.
+/// Currently only supported type is a struct. This will generate a function which iterates over
+/// all fields inside a struct and check their equality using `eql` function.
+///
+/// Example usage:
+/// ```zig
+/// pub const eql = xtra.equality.default(@This());
+/// ```
+///
+/// To implement custom equality instead, create a `eql` member function with two `@This()` parameters
+/// and returning a `bool`.
+pub fn default(comptime Self: type) fn (self: Self, other: Self) bool {
+    return struct {
+        fn do(self: Self, other: Self) bool {
+            inline for (@typeInfo(Self).@"struct".fields) |field| {
+                if (!eql(field.type, @field(self, field.name), @field(other, field.name))) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+    }.do;
+}
