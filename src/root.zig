@@ -6,6 +6,7 @@ pub const duplication = @import("duplication.zig");
 pub const equality = @import("equality.zig");
 pub const closure = @import("closure.zig");
 pub const iterator = @import("iterator.zig");
+pub const enumerable = @import("enumerable.zig");
 
 comptime {
     std.testing.refAllDecls(@This());

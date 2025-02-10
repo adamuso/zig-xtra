@@ -35,3 +35,16 @@ pub inline fn isPointer(comptime T: type) bool {
         else => false,
     };
 }
+
+pub inline fn canBeDeinitializedWithoutAllocator(comptime T: type) bool {
+    const DerefT = switch (@typeInfo(T)) {
+        .pointer => |v| if (v.size != .slice) v.child else T,
+        else => T,
+    };
+
+    if (canHaveDecls(DerefT) and @hasDecl(DerefT, "deinit") and @typeInfo(@TypeOf(DerefT.deinit)).@"fn".params.len == 1) {
+        return true;
+    }
+
+    return false;
+}

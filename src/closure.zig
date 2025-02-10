@@ -173,6 +173,20 @@ pub const AnyClosure = struct {
         }.stub;
     }
 
+    pub fn fromFn(
+        comptime function: anytype,
+        captures: @typeInfo(@TypeOf(function)).@"fn".params[0].type.?,
+    ) @This() {
+        return initClosure(@TypeOf(function), function, captures).toAny();
+    }
+
+    pub fn fromStruct(
+        comptime Struct: type,
+        captures: @typeInfo(firstDeclInStruct(Struct).type).@"fn".params[0].type.?,
+    ) @This() {
+        return @This().fromFn(@field(Struct, firstDeclInStruct(Struct).name), captures);
+    }
+
     allocator: ?std.mem.Allocator,
     captures: *anyopaque,
     vtable: *const struct {
@@ -309,6 +323,16 @@ pub fn OpaqueClosure(comptime Fn: type) type {
             captures: @typeInfo(@TypeOf(function)).@"fn".params[0].type.?,
         ) @TypeOf(initClosure(@TypeOf(function), function, captures).toOpaque()) {
             return initClosure(@TypeOf(function), function, captures).toOpaque();
+        }
+
+        pub fn fromStruct(
+            comptime Struct: type,
+            captures: @typeInfo(firstDeclInStruct(Struct).type).@"fn".params[0].type.?,
+        ) @TypeOf(Self.fromFn(
+            @field(Struct, firstDeclInStruct(Struct).name),
+            captures,
+        )) {
+            return Self.fromFn(@field(Struct, firstDeclInStruct(Struct).name), captures);
         }
 
         closure: AnyClosure,
