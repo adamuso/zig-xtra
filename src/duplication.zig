@@ -38,11 +38,6 @@ pub fn dupeFn(comptime T: type) Dupe(T) {
     return struct {
         fn dupeImpl(allocator: std.mem.Allocator, value: T) !T {
             switch (@typeInfo(T)) {
-                .pointer => |v| if (v.size == .slice) {
-                    return try dupeSlice(@TypeOf(value[0]), allocator, value);
-                } else {
-                    return try dupePtr(@TypeOf(value.*), allocator, value);
-                },
                 .@"struct" => |v| if (v.is_tuple) {
                     var result: T = undefined;
 
@@ -153,13 +148,35 @@ pub fn noDupeSlice(_: std.mem.Allocator, _: []const anyopaque) ![]anyopaque {
 ///
 /// To implement custom duping instead, create a `dupe` member function with an `allocator` parameter
 /// returning `!@This()`.
-pub fn default(comptime Self: type) fn (self: Self, allocator: std.mem.Allocator) anyerror!Self {
+pub fn default(comptime Self: type, owned_pointers: anytype) fn (self: Self, allocator: std.mem.Allocator) anyerror!Self {
     return struct {
         fn do(self: Self, allocator: std.mem.Allocator) !Self {
             var copy: Self = undefined;
 
             inline for (@typeInfo(Self).@"struct".fields) |field| {
                 @field(copy, field.name) = try dupe(field.type, allocator, @field(self, field.name));
+            }
+
+            inline for (owned_pointers) |field_name| {
+                const field_type = @TypeOf(@field(self, field_name));
+
+                if (!helpers.isPointer(field_type)) {
+                    @compileError("Owned pointer must only include fields that are pointer type");
+                }
+
+                if (helpers.isSlice(field_type)) {
+                    @field(copy, field_name) = try dupeSlice(
+                        @TypeOf(@field(self, field_name)[0]),
+                        allocator,
+                        @field(self, field_name),
+                    );
+                } else {
+                    @field(copy, field_name) = try dupePtr(
+                        @TypeOf(@field(self, field_name).*),
+                        allocator,
+                        @field(self, field_name),
+                    );
+                }
             }
 
             return copy;
@@ -174,7 +191,7 @@ test "Basic duplication" {
     try std.testing.expectEqual(a, b);
 
     const c = [_]u32{ 1, 2, 3 };
-    const d = try dupe([]const u32, std.testing.allocator, &c);
+    const d = try dupeSlice(u32, std.testing.allocator, &c);
     defer std.testing.allocator.free(d);
 
     try std.testing.expectEqualDeep(&c, d);
@@ -200,7 +217,7 @@ test "Struct default copy" {
             };
         }
 
-        pub const dupe = default(@This());
+        pub const dupe = default(@This(), .{"foo_data"});
 
         fn deinit(self: @This()) void {
             self.allocator.destroy(self.foo_data);
@@ -221,7 +238,7 @@ test "Struct default copy" {
             };
         }
 
-        pub const dupe = default(@This());
+        pub const dupe = default(@This(), .{"bar_data"});
 
         fn deinit(self: @This(), allocator: std.mem.Allocator) void {
             allocator.destroy(self.bar_data);

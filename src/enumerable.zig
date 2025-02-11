@@ -1,4 +1,6 @@
 const std = @import("std");
+const Any = @import("Any.zig");
+const duplication = @import("duplication.zig");
 const closure = @import("closure.zig");
 const raii = @import("raii.zig");
 const _iter = @import("iterator.zig");
@@ -63,6 +65,10 @@ const EnumerableOperation = union(enum) {
     Filter: struct {
         func: closure.AnyClosure,
         has_error: bool,
+    },
+    OrderBy: struct {
+        allocator: std.mem.Allocator,
+        func: closure.AnyClosure,
     },
 };
 
@@ -137,13 +143,23 @@ pub fn Enumerable(comptime Result: type, comptime Source: type) type {
                     else => unreachable,
                 };
 
+                const Item = @TypeOf(switch (@typeInfo(@TypeOf(it.next().?))) {
+                    .error_union => try it.next().?,
+                    else => it.next().?,
+                });
+
+                const OrderByContext = struct {
+                    list: std.ArrayList(Item),
+                    current: usize = 0,
+
+                    pub const deinit = raii.defaultWithoutAllocator(@This(), .{});
+                };
+
                 while (it.next()) |errorOrItem| {
                     const item = switch (@typeInfo(@TypeOf(errorOrItem))) {
                         .error_union => try errorOrItem,
                         else => errorOrItem,
                     };
-
-                    const Item: type = @TypeOf(item);
 
                     switch (self.operation) {
                         .Identity => return if (Result == Source) item else unreachable,
@@ -167,7 +183,59 @@ pub fn Enumerable(comptime Result: type, comptime Source: type) type {
 
                             return if (Iter.Result == Source) item else unreachable;
                         },
+                        .OrderBy => |v| {
+                            if (self.context == null) {
+                                @panic("OrderBy requires enumerable to have a context");
+                            }
+
+                            const enumerable_context = self.context.?;
+
+                            if (enumerable_context.* == null) {
+                                enumerable_context.* = try Any.create(
+                                    OrderByContext,
+                                    v.allocator,
+                                    .{ .list = std.ArrayList(Item).init(v.allocator) },
+                                );
+                            }
+
+                            const context = try enumerable_context.*.?.get(OrderByContext);
+
+                            (try context.list.addOne()).* = try duplication.dupe(Item, v.allocator, item);
+                            continue;
+                        },
                     }
+                }
+
+                switch (self.operation) {
+                    .OrderBy => |v| {
+                        if (self.context == null) {
+                            @panic("OrderBy requires enumerable to have a context");
+                        }
+
+                        const enumerable_context = self.context.?;
+
+                        if (enumerable_context.* == null) {
+                            @panic("OrderBy requires enumerable context to be instantiated when iterating on ordered sequence");
+                        }
+
+                        const context = try enumerable_context.*.?.get(OrderByContext);
+
+                        const opaque_func = try v.func.toOpaque(fn (a: Item, b: Item) bool);
+                        std.mem.sort(Item, context.list.items, opaque_func, @TypeOf(opaque_func).invoke);
+
+                        if (context.current < context.list.items.len) {
+                            context.current += 1;
+                            return if (Iter.Result == Source) context.list.items[context.current - 1] else unreachable;
+                        }
+
+                        for (context.list.items) |*item| {
+                            raii.deinit(Item, v.allocator, item);
+                        }
+
+                        enumerable_context.*.?.deinit(v.allocator);
+                        enumerable_context.* = null;
+                    },
+                    else => {},
                 }
 
                 return null;
@@ -225,9 +293,20 @@ pub fn Enumerable(comptime Result: type, comptime Source: type) type {
             };
         }
 
+        fn chainWithContext(allocator: std.mem.Allocator, prev_iterator: anyerror!Iterator(Source), operation: EnumerableOperation) !@This() {
+            const context = try allocator.create(?Any);
+            context.* = null;
+
+            return .{
+                .prev_iterator = if (prev_iterator) |v| .{ .internal = v } else |err| err,
+                .operation = operation,
+                .context = context,
+            };
+        }
+
         prev_iterator: anyerror!IteratorImplementation,
         operation: EnumerableOperation,
-        allocated_on_stack: bool = true,
+        context: ?*?Any = null,
 
         // Operations
         pub fn map(self: *const @This(), function: anytype) Enumerable(@TypeOf(function).Return, Iter.Result) {
@@ -280,6 +359,19 @@ pub fn Enumerable(comptime Result: type, comptime Source: type) type {
                         .error_union => true,
                         else => false,
                     },
+                },
+            });
+        }
+
+        pub fn orderBy(
+            self: *const @This(),
+            allocator: std.mem.Allocator,
+            lessThanFn: closure.OpaqueClosure(fn (Result, Result) bool),
+        ) !Enumerable(Result, Iter.Result) {
+            return try Enumerable(Result, Iter.Result).chainWithContext(allocator, self.iterator(), .{
+                .OrderBy = .{
+                    .allocator = allocator,
+                    .func = lessThanFn.closure,
                 },
             });
         }
@@ -635,4 +727,79 @@ test "Enumerable mapTo" {
     defer allocator.free(y);
 
     try std.testing.expectEqualDeep(@as([]const f32, &.{ 16, 32, 48 }), y);
+}
+
+test "Enumerable orderBy" {
+    const allocator = std.testing.allocator;
+
+    var iterator = Iterator(u32).fromSlice(&.{ 5, 4, 2, 3, 1, 6 });
+    var x = Enumerable(u32, u32).init(&iterator);
+
+    const y = try (try x.orderBy(allocator, .fromStruct(struct {
+        pub fn do(_: void, left: u32, right: u32) bool {
+            return left < right;
+        }
+    }, {}))).filter(closure.fromStruct(struct {
+        pub fn filter(_: void, item: u32) bool {
+            return item % 2 == 0;
+        }
+    }, {}).toOpaque()).toArray(allocator);
+
+    defer allocator.free(y);
+
+    try std.testing.expectEqualDeep(@as([]const u32, &.{ 2, 4, 6 }), y);
+}
+
+test "Enumerable orderBy on structs with allocated data" {
+    const Foo = struct {
+        data: *u32,
+
+        fn init(allocator: std.mem.Allocator, value: u32) !@This() {
+            const data = try allocator.create(u32);
+            data.* = value;
+
+            return .{
+                .data = data,
+            };
+        }
+
+        pub const dupe = duplication.default(@This(), .{"data"});
+        pub const deinit = raii.defaultWithoutAllocator(@This(), .{"data"});
+    };
+
+    const allocator = std.testing.allocator;
+
+    var array = [_]Foo{
+        try Foo.init(allocator, 5),
+        try Foo.init(allocator, 4),
+        try Foo.init(allocator, 2),
+        try Foo.init(allocator, 3),
+        try Foo.init(allocator, 1),
+        try Foo.init(allocator, 6),
+    };
+
+    var iterator = Iterator(Foo).fromSlice(&array);
+
+    var x = Enumerable(Foo, Foo).init(&iterator);
+
+    const y = try (try x.filter(closure.fromStruct(struct {
+        pub fn filter(_: void, item: Foo) bool {
+            return item.data.* % 2 == 0;
+        }
+    }, {}).toOpaque()).orderBy(allocator, .fromStruct(struct {
+        pub fn do(_: void, left: Foo, right: Foo) bool {
+            return left.data.* < right.data.*;
+        }
+    }, {}))).mapTo(u32, .fromStruct(struct {
+        pub fn map(_: void, item: Foo) u32 {
+            return item.data.*;
+        }
+    }, {})).toArray(allocator);
+
+    defer allocator.free(y);
+
+    var slice: []Foo = &array;
+    raii.deinit([]Foo, allocator, &slice);
+
+    try std.testing.expectEqualDeep(@as([]const u32, &.{ 2, 4, 6 }), y);
 }

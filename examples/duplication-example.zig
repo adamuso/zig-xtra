@@ -16,7 +16,7 @@ const Bar = struct {
     }
 
     // Using dupe default implementation
-    pub const dupe = xtra.duplication.default(@This());
+    pub const dupe = xtra.duplication.default(@This(), .{"bar_data"});
     pub const deinit = xtra.raii.default(@This(), .{"bar_data"});
 };
 
@@ -38,7 +38,7 @@ const Foo = struct {
     pub fn dupe(self: Foo, allocator: std.mem.Allocator) !Foo {
         return .{
             .bar = try self.bar.dupe(allocator),
-            .foo_data = try xtra.duplication.dupe(*u32, allocator, self.foo_data),
+            .foo_data = try xtra.duplication.dupePtr(u32, allocator, self.foo_data),
         };
     }
 
