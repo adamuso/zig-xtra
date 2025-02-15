@@ -352,6 +352,30 @@ pub fn Enumerable(comptime Result: type, comptime Source: type) type {
             });
         }
 
+        pub fn filterBy(self: *const Self, function: closure.OpaqueClosure(fn (Result) bool)) Enumerable(Result, Self) {
+            return self.chain(Result, .{
+                .Filter = .{
+                    .func = function.closure,
+                    .has_error = switch (@typeInfo(@TypeOf(function).Return)) {
+                        .error_union => true,
+                        else => false,
+                    },
+                },
+            });
+        }
+
+        pub fn filterByWithError(self: *const Self, function: closure.OpaqueClosure(fn (Result) anyerror!bool)) Enumerable(Result, Self) {
+            return self.chain(Result, .{
+                .Filter = .{
+                    .func = function.closure,
+                    .has_error = switch (@typeInfo(@TypeOf(function).Return)) {
+                        .error_union => true,
+                        else => false,
+                    },
+                },
+            });
+        }
+
         pub fn orderBy(
             self: *const Self,
             allocator: std.mem.Allocator,
@@ -419,19 +443,6 @@ pub fn Enumerable(comptime Result: type, comptime Source: type) type {
                 // }
 
                 raii.deinit(@TypeOf(value.*), allocator, value);
-            }
-        }
-
-        pub fn deinitAndDestroyAll(self: @This(), allocator: std.mem.Allocator) AttachErrorIf(void, result_has_error) {
-            var self_copy = self;
-            var it = self_copy.iterator();
-            it.reset();
-            defer it.deinit();
-
-            while (it.next()) |v| {
-                const value = v catch |err| return errorOrUnrechable(err);
-
-                raii.deinitAndDestroy(@TypeOf(value.*), allocator, value);
             }
         }
 
@@ -541,7 +552,7 @@ pub fn Enumerable(comptime Result: type, comptime Source: type) type {
             } else |_| {}
         }
 
-        pub fn iterator(self: *const @This()) Iter {
+        pub fn iterator(self: *const Self) Iter {
             return Iter{
                 .ptr = self,
                 .vtable = comptime &.{
