@@ -72,10 +72,6 @@ const EnumerableOperation = union(enum) {
     },
 };
 
-pub fn Enumerator(comptime Result: type) type {
-    return Enumerable(Result, Result);
-}
-
 pub fn Enumerable(comptime Result: type, comptime Source: type) type {
     return struct {
         const Self = @This();
@@ -98,14 +94,14 @@ pub fn Enumerable(comptime Result: type, comptime Source: type) type {
                 iterator: *Iterator(Source),
             },
 
-            fn reset(self: IteratorImplementation) void {
+            fn reset(self: @This()) void {
                 switch (self) {
                     .external => |v| v.reset(),
                     .external_copy => |v| v.iterator.reset(),
                 }
             }
 
-            fn deinit(self: IteratorImplementation) void {
+            fn deinit(self: @This()) void {
                 switch (self) {
                     .external => {},
                     .external_copy => |v| {
@@ -114,7 +110,7 @@ pub fn Enumerable(comptime Result: type, comptime Source: type) type {
                 }
             }
 
-            fn index(self: IteratorImplementation) usize {
+            fn index(self: @This()) usize {
                 return switch (self) {
                     .external => |v| v.index(),
                     .external_copy => |v| v.iterator.index(),
@@ -241,6 +237,10 @@ pub fn Enumerable(comptime Result: type, comptime Source: type) type {
 
             pub fn reset(self: *const Self, _: *const Iter) void {
                 if (is_internal) {
+                    if (self.prev_source) |v| {
+                        var it = v.iterator();
+                        it.reset();
+                    } else |_| {}
                     return;
                 }
 
@@ -250,21 +250,15 @@ pub fn Enumerable(comptime Result: type, comptime Source: type) type {
             }
 
             pub fn deinit(self: *const Self) void {
-                if (self.prev_source) |v| {
-                    v.deinit();
-                } else |_| {}
+                self.deinit();
             }
 
             pub fn index(self: *const Self, _: *const Iter) usize {
                 if (is_internal) {
-                    return 0;
+                    return if (self.prev_source) |v| v.iterator().index() else |_| 0;
                 }
 
-                if (self.prev_source) |iter| {
-                    return iter.index();
-                } else |_| {
-                    return 0;
-                }
+                return if (self.prev_source) |v| v.index() else |_| 0;
             }
         };
 
@@ -703,8 +697,6 @@ test "Enumerable allow traversing multiple times" {
     }, &sum));
 
     try std.testing.expectEqual(30, sum);
-
-    iterator.reset();
 
     var sum2: i32 = 0;
     enumerable.map(closure.fromStruct(struct {
