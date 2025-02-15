@@ -80,6 +80,8 @@ pub fn Enumerable(comptime Result: type, comptime Source: type) type {
     return struct {
         const Self = @This();
         const Iter = Iterator(AttachError(Result));
+        const is_internal = helpers.canHaveDecls(Source) and @hasDecl(Source, "iterator");
+        const UnwrappedSource = if (is_internal) Source.UnwrappedSource else AttachError(Source);
 
         const result_has_error: bool = switch (@typeInfo(Result)) {
             .error_union => true,
@@ -89,8 +91,7 @@ pub fn Enumerable(comptime Result: type, comptime Source: type) type {
         const can_result_be_deinitialized_without_an_allocator =
             helpers.canBeDeinitializedWithoutAllocator(@typeInfo(Iter.Result).error_union.payload);
 
-        const IteratorImplementation = union(enum) {
-            internal: Iterator(Source),
+        const IteratorImplementation = if (is_internal) Source else union(enum) {
             external: *Iterator(Source),
             external_copy: struct {
                 allocator: std.mem.Allocator,
@@ -99,10 +100,6 @@ pub fn Enumerable(comptime Result: type, comptime Source: type) type {
 
             fn reset(self: IteratorImplementation) void {
                 switch (self) {
-                    .internal => |v| {
-                        var copy = v;
-                        copy.reset();
-                    },
                     .external => |v| v.reset(),
                     .external_copy => |v| v.iterator.reset(),
                 }
@@ -110,10 +107,8 @@ pub fn Enumerable(comptime Result: type, comptime Source: type) type {
 
             fn deinit(self: IteratorImplementation) void {
                 switch (self) {
-                    .internal => |v| v.deinit(),
                     .external => {},
                     .external_copy => |v| {
-                        v.iterator.deinit();
                         v.allocator.destroy(v.iterator);
                     },
                 }
@@ -121,7 +116,6 @@ pub fn Enumerable(comptime Result: type, comptime Source: type) type {
 
             fn index(self: IteratorImplementation) usize {
                 return switch (self) {
-                    .internal => |v| v.index(),
                     .external => |v| v.index(),
                     .external_copy => |v| v.iterator.index(),
                 };
@@ -130,17 +124,21 @@ pub fn Enumerable(comptime Result: type, comptime Source: type) type {
 
         const IteratorContext = struct {
             pub fn next(self: *const Self, _: *Iter) ?Iter.Result {
-                const it_impl = self.prev_iterator catch |err| {
+                const it_impl = self.prev_source catch |err| {
                     return err;
                 };
-                var it_copy = switch (it_impl) {
-                    .internal => |v| v,
-                    else => null,
-                };
-                const it = if (it_copy != null) &it_copy.? else switch (it_impl) {
-                    .external => |v| v,
-                    .external_copy => |v| v.iterator,
-                    else => unreachable,
+
+                var it_copy = if (is_internal) it_impl.iterator() else {};
+
+                const it = blk: {
+                    if (is_internal) {
+                        break :blk &it_copy;
+                    }
+
+                    break :blk switch (it_impl) {
+                        .external => |v| v,
+                        .external_copy => |v| v.iterator,
+                    };
                 };
 
                 const Item = @TypeOf(switch (@typeInfo(@TypeOf(it.next().?))) {
@@ -181,7 +179,7 @@ pub fn Enumerable(comptime Result: type, comptime Source: type) type {
                                 }
                             }
 
-                            return if (Iter.Result == Source) item else unreachable;
+                            return if (Iter.Result == UnwrappedSource) item else unreachable;
                         },
                         .OrderBy => |v| {
                             if (self.context == null) {
@@ -225,7 +223,7 @@ pub fn Enumerable(comptime Result: type, comptime Source: type) type {
 
                         if (context.current < context.list.items.len) {
                             context.current += 1;
-                            return if (Iter.Result == Source) context.list.items[context.current - 1] else unreachable;
+                            return if (Iter.Result == UnwrappedSource) context.list.items[context.current - 1] else unreachable;
                         }
 
                         for (context.list.items) |*item| {
@@ -242,19 +240,27 @@ pub fn Enumerable(comptime Result: type, comptime Source: type) type {
             }
 
             pub fn reset(self: *const Self, _: *const Iter) void {
-                if (self.prev_iterator) |v| {
+                if (is_internal) {
+                    return;
+                }
+
+                if (self.prev_source) |v| {
                     v.reset();
                 } else |_| {}
             }
 
             pub fn deinit(self: *const Self) void {
-                if (self.prev_iterator) |v| {
+                if (self.prev_source) |v| {
                     v.deinit();
                 } else |_| {}
             }
 
             pub fn index(self: *const Self, _: *const Iter) usize {
-                if (self.prev_iterator) |iter| {
+                if (is_internal) {
+                    return 0;
+                }
+
+                if (self.prev_source) |iter| {
                     return iter.index();
                 } else |_| {
                     return 0;
@@ -264,14 +270,7 @@ pub fn Enumerable(comptime Result: type, comptime Source: type) type {
 
         pub fn init(prev_iterator: *Iterator(Source)) @This() {
             return .{
-                .prev_iterator = .{ .external = prev_iterator },
-                .operation = .{ .Identity = {} },
-            };
-        }
-
-        pub fn initConst(prev_iterator: Iterator(Source)) @This() {
-            return .{
-                .prev_iterator = .{ .internal = prev_iterator },
+                .prev_source = .{ .external = prev_iterator },
                 .operation = .{ .Identity = {} },
             };
         }
@@ -281,39 +280,39 @@ pub fn Enumerable(comptime Result: type, comptime Source: type) type {
             x.* = prev_iterator;
 
             return .{
-                .prev_iterator = .{ .external_copy = .{ .allocator = allocator, .iterator = x } },
+                .prev_source = .{ .external_copy = .{ .allocator = allocator, .iterator = x } },
                 .operation = .{ .Identity = {} },
             };
         }
 
-        fn chain(prev_iterator: anyerror!Iterator(Source), operation: EnumerableOperation) @This() {
+        fn chain(self: Self, comptime NextResult: type, operation: EnumerableOperation) Enumerable(NextResult, Self) {
             return .{
-                .prev_iterator = if (prev_iterator) |v| .{ .internal = v } else |err| err,
+                .prev_source = self,
                 .operation = operation,
             };
         }
 
-        fn chainWithContext(allocator: std.mem.Allocator, prev_iterator: anyerror!Iterator(Source), operation: EnumerableOperation) !@This() {
-            const context = try allocator.create(?Any);
-            context.* = null;
+        fn chainWithContext(self: Self, comptime NextResult: type, allocator: std.mem.Allocator, operation: EnumerableOperation) Enumerable(NextResult, Self) {
+            const context = allocator.create(?Any);
+
+            if (context) |v| {
+                v.* = null;
+            } else |_| {}
 
             return .{
-                .prev_iterator = if (prev_iterator) |v| .{ .internal = v } else |err| err,
+                .prev_source = if (context) |_| self else |err| err,
                 .operation = operation,
-                .context = context,
+                .context = if (context) |v| v else |_| null,
             };
         }
 
-        prev_iterator: anyerror!IteratorImplementation,
+        prev_source: anyerror!IteratorImplementation,
         operation: EnumerableOperation,
         context: ?*?Any = null,
 
         // Operations
-        pub fn map(self: *const @This(), function: anytype) Enumerable(@TypeOf(function).Return, Iter.Result) {
-            const NewResult = @TypeOf(function).Return;
-            const NewSource = Iter.Result;
-
-            return Enumerable(NewResult, NewSource).chain(self.iterator(), .{
+        pub fn map(self: *const Self, function: anytype) Enumerable(@TypeOf(function).Return, Self) {
+            return self.chain(@TypeOf(function).Return, .{
                 .Map = .{
                     .func = function.closure,
                     .has_index = @typeInfo(@TypeOf(function).Function).@"fn".params.len == 2,
@@ -322,13 +321,11 @@ pub fn Enumerable(comptime Result: type, comptime Source: type) type {
         }
 
         pub fn mapTo(
-            self: *const @This(),
+            self: *const Self,
             comptime MapResult: type,
             function: closure.OpaqueClosure(fn (item: DetachError(Iter.Result)) MapResult),
-        ) Enumerable(MapResult, Iter.Result) {
-            const NewSource = Iter.Result;
-
-            return Enumerable(MapResult, NewSource).chain(self.iterator(), .{
+        ) Enumerable(MapResult, Self) {
+            return self.chain(MapResult, .{
                 .Map = .{
                     .func = function.closure,
                     .has_index = false,
@@ -337,13 +334,11 @@ pub fn Enumerable(comptime Result: type, comptime Source: type) type {
         }
 
         pub fn mapToWithIndex(
-            self: *const @This(),
+            self: *const Self,
             comptime MapResult: type,
             function: closure.OpaqueClosure(fn (item: DetachError(Iter.Result), index: usize) MapResult),
-        ) Enumerable(MapResult, Iter.Result) {
-            const NewSource = Iter.Result;
-
-            return Enumerable(MapResult, NewSource).chain(self.iterator(), .{
+        ) Enumerable(MapResult, Self) {
+            return self.chain(MapResult, .{
                 .Map = .{
                     .func = function.closure,
                     .has_index = true,
@@ -351,8 +346,8 @@ pub fn Enumerable(comptime Result: type, comptime Source: type) type {
             });
         }
 
-        pub fn filter(self: *const @This(), function: anytype) Enumerable(Result, Iter.Result) {
-            return Enumerable(Result, Iter.Result).chain(self.iterator(), .{
+        pub fn filter(self: *const Self, function: anytype) Enumerable(Result, Self) {
+            return self.chain(Result, .{
                 .Filter = .{
                     .func = function.closure,
                     .has_error = switch (@typeInfo(@TypeOf(function).Return)) {
@@ -364,11 +359,11 @@ pub fn Enumerable(comptime Result: type, comptime Source: type) type {
         }
 
         pub fn orderBy(
-            self: *const @This(),
+            self: *const Self,
             allocator: std.mem.Allocator,
             lessThanFn: closure.OpaqueClosure(fn (Result, Result) bool),
-        ) !Enumerable(Result, Iter.Result) {
-            return try Enumerable(Result, Iter.Result).chainWithContext(allocator, self.iterator(), .{
+        ) Enumerable(Result, Self) {
+            return self.chainWithContext(Result, allocator, .{
                 .OrderBy = .{
                     .allocator = allocator,
                     .func = lessThanFn.closure,
@@ -533,6 +528,25 @@ pub fn Enumerable(comptime Result: type, comptime Source: type) type {
             return null;
         }
 
+        // Other methods
+        pub fn deinit(self: Self) void {
+            if (self.context) |context| {
+                switch (self.operation) {
+                    .OrderBy => |o| {
+                        if (context.*) |v| {
+                            v.deinit(o.allocator);
+                        }
+                        o.allocator.destroy(context);
+                    },
+                    else => {},
+                }
+            }
+
+            if (self.prev_source) |v| {
+                v.deinit();
+            } else |_| {}
+        }
+
         pub fn iterator(self: *const @This()) Iter {
             return Iter{
                 .ptr = self,
@@ -566,7 +580,7 @@ pub fn fromExternalIterator(comptime T: type, iterator: *T) Enumerable(
     return Enumerable(
         _iter.AnyIteratorResult(T),
         _iter.AnyIteratorResult(T),
-    ).initConst(
+    ).init(
         Iterator(_iter.AnyIteratorResult(T)).fromIterator(T, iterator),
     );
 }
@@ -690,6 +704,8 @@ test "Enumerable allow traversing multiple times" {
 
     try std.testing.expectEqual(30, sum);
 
+    iterator.reset();
+
     var sum2: i32 = 0;
     enumerable.map(closure.fromStruct(struct {
         pub fn map(_: void, item: i32) i32 {
@@ -735,11 +751,11 @@ test "Enumerable orderBy" {
     var iterator = Iterator(u32).fromSlice(&.{ 5, 4, 2, 3, 1, 6 });
     var x = Enumerable(u32, u32).init(&iterator);
 
-    const y = try (try x.orderBy(allocator, .fromStruct(struct {
+    const y = try x.orderBy(allocator, .fromStruct(struct {
         pub fn do(_: void, left: u32, right: u32) bool {
             return left < right;
         }
-    }, {}))).filter(closure.fromStruct(struct {
+    }, {})).filter(closure.fromStruct(struct {
         pub fn filter(_: void, item: u32) bool {
             return item % 2 == 0;
         }
@@ -782,7 +798,7 @@ test "Enumerable orderBy on structs with allocated data" {
 
     var x = Enumerable(Foo, Foo).init(&iterator);
 
-    const y = try (try x.filter(closure.fromStruct(struct {
+    const y = try x.filter(closure.fromStruct(struct {
         pub fn filter(_: void, item: Foo) bool {
             return item.data.* % 2 == 0;
         }
@@ -790,7 +806,7 @@ test "Enumerable orderBy on structs with allocated data" {
         pub fn do(_: void, left: Foo, right: Foo) bool {
             return left.data.* < right.data.*;
         }
-    }, {}))).mapTo(u32, .fromStruct(struct {
+    }, {})).mapTo(u32, .fromStruct(struct {
         pub fn map(_: void, item: Foo) u32 {
             return item.data.*;
         }
@@ -802,4 +818,42 @@ test "Enumerable orderBy on structs with allocated data" {
     raii.deinit([]Foo, allocator, &slice);
 
     try std.testing.expectEqualDeep(@as([]const u32, &.{ 2, 4, 6 }), y);
+}
+
+test "Enumerable temporary value with destroyed scope" {
+    const X = struct {
+        pub fn v(x: Enumerable(u32, u32)) Enumerable(f32, Enumerable(f32, Enumerable(u32, Enumerable(u32, u32)))) {
+            return x.filter(closure.fromStruct(struct {
+                pub fn filter(_: void, item: u32) bool {
+                    return item % 2 == 0;
+                }
+            }, {}).toOpaque()).map(closure.fromStruct(struct {
+                pub fn map(_: void, item: u32) f32 {
+                    return @as(f32, @floatFromInt(item)) * 2;
+                }
+            }, {}).toOpaque()).map(closure.fromStruct(struct {
+                pub fn map(_: void, item: f32) f32 {
+                    return item * 4;
+                }
+            }, {}).toOpaque());
+        }
+    };
+
+    const allocator = std.testing.allocator;
+
+    var enumerable: Enumerable(f32, Enumerable(f32, Enumerable(u32, Enumerable(u32, u32)))) = undefined;
+    var iterator = Iterator(u32).fromSlice(&.{ 1, 2, 3, 4, 5, 6 });
+    const x = Enumerable(u32, u32).init(&iterator);
+
+    {
+        enumerable = X.v(x);
+    }
+
+    var a: u32 = 10;
+    a = 20;
+
+    const y = try enumerable.toArray(allocator);
+    defer allocator.free(y);
+
+    try std.testing.expectEqualDeep(@as([]const f32, &.{ 16, 32, 48 }), y);
 }
