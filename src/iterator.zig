@@ -1,4 +1,7 @@
 const std = @import("std");
+const helpers = @import("helpers.zig");
+const closure = @import("closure.zig");
+const raii = @import("raii.zig");
 
 pub fn AnyIteratorResult(comptime T: type) type {
     return @typeInfo(@typeInfo(@TypeOf(@field(T, "next"))).@"fn".return_type.?).optional.child;
@@ -8,7 +11,7 @@ pub fn Iterator(comptime ResultType: type) type {
     return struct {
         const Self = @This();
         pub const Result = ResultType;
-        pub const Error = error{CannotConvertToConstIterator};
+        pub const FinalizerResult = helpers.DetachError(Result);
         pub const DerefResult = switch (@typeInfo(Result)) {
             .pointer => |v| v.child,
             else => Result,
@@ -155,6 +158,139 @@ pub fn Iterator(comptime ResultType: type) type {
 
         pub fn deinit(self: @This()) void {
             self.vtable.deinit(self.ptr);
+        }
+
+        // Finalizers
+        pub const result_has_error: bool = switch (@typeInfo(Result)) {
+            .error_union => true,
+            else => false,
+        };
+
+        pub fn toArrayList(self: *@This(), allocator: std.mem.Allocator) !std.ArrayList(FinalizerResult) {
+            var list = std.ArrayList(FinalizerResult).init(allocator);
+            self.reset();
+            errdefer list.deinit();
+            defer self.deinit();
+
+            while (self.next()) |v| {
+                (try list.addOne()).* = if (result_has_error) try v else v;
+            }
+
+            return list;
+        }
+
+        pub fn toArray(self: *@This(), allocator: std.mem.Allocator) ![]const Result {
+            var list = try self.toArrayList(allocator);
+            return list.toOwnedSlice();
+        }
+
+        pub fn destroyAll(self: *@This(), allocator: std.mem.Allocator) helpers.AttachErrorIf(void, result_has_error) {
+            self.reset();
+            defer self.deinit();
+
+            while (self.next()) |v| {
+                const value = if (result_has_error) try v else v;
+
+                raii.destroy(@TypeOf(value.*), allocator, value);
+            }
+        }
+
+        pub fn deinitAll(
+            self: *@This(),
+            // allocator: if (can_result_be_deinitialized_without_an_allocator) void else std.mem.Allocator,
+            allocator: std.mem.Allocator,
+        ) helpers.AttachErrorIf(void, result_has_error) {
+            self.reset();
+            defer self.deinit();
+
+            while (self.next()) |v| {
+                const value = if (result_has_error) try v else v;
+
+                // if (can_result_be_deinitialized_without_an_allocator) {
+                //     auto_deinit.autoDeinitWithoutAllocator(@TypeOf(value), value);
+                // } else {
+                //     auto_deinit.autoDeinit(@TypeOf(value), value, allocator);
+                // }
+
+                raii.deinit(@TypeOf(value.*), allocator, value);
+            }
+        }
+
+        pub fn forEach(self: *@This(), func: closure.OpaqueClosure(fn (FinalizerResult) void)) helpers.AttachErrorIf(void, result_has_error) {
+            defer func.deinit();
+
+            self.reset();
+            defer self.deinit();
+
+            while (self.next()) |v| {
+                func.invoke(if (result_has_error) try v else v);
+            }
+        }
+
+        pub fn first(self: *@This()) helpers.AttachErrorIf(?Result, result_has_error) {
+            self.reset();
+            defer self.deinit();
+
+            while (self.next()) |v| {
+                return if (result_has_error) try v else v;
+            }
+
+            return null;
+        }
+
+        pub fn last(self: *@This()) helpers.AttachErrorIf(?Result, result_has_error) {
+            self.reset();
+            defer self.deinit();
+
+            var copy: ?Result = null;
+
+            while (self.next()) |v| {
+                copy = if (result_has_error) try v else v;
+            }
+
+            return copy;
+        }
+
+        pub fn findEql(self: *@This(), other: helpers.MakeConst(helpers.DetachError(Result))) helpers.AttachErrorIf(?Result, result_has_error) {
+            self.reset();
+            defer self.deinit();
+
+            while (self.next()) |v| {
+                const item = if (result_has_error) try v else v;
+
+                if (std.meta.hasMethod(@TypeOf(item), "eql")) {
+                    if (item.eql(other)) {
+                        return item;
+                    }
+                } else {
+                    if (std.meta.eql(helpers.derefIfNeeded(item), other)) {
+                        return item;
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        pub fn findIndexEql(self: *@This(), other: helpers.MakeConst(helpers.DetachError(Result))) helpers.AttachErrorIf(?usize, result_has_error) {
+            self.reset();
+            defer self.deinit();
+
+            while (self.next()) |v| {
+                const item = if (result_has_error) try v else v;
+
+                if (std.meta.hasMethod(@TypeOf(item), "eql")) {
+                    if (item.eql(other)) {
+                        return self.index() - 1;
+                    }
+                } else {
+                    if (std.meta.eql(helpers.derefIfNeeded(item), other)) {
+                        return self.index() - 1;
+                    }
+                }
+            }
+
+            return null;
         }
     };
 }

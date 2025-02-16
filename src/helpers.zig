@@ -1,3 +1,28 @@
+pub inline fn MakeConst(comptime Result: type) type {
+    return switch (@typeInfo(Result)) {
+        .pointer => |v| v.child,
+        else => Result,
+    };
+}
+
+pub inline fn AttachError(comptime Result: type) type {
+    return switch (@typeInfo(Result)) {
+        .error_union => |v| anyerror!v.payload,
+        else => anyerror!Result,
+    };
+}
+
+pub inline fn AttachErrorIf(comptime Result: type, comptime conidtion: bool) type {
+    return if (conidtion) AttachError(Result) else Result;
+}
+
+pub inline fn DetachError(comptime Result: type) type {
+    return switch (@typeInfo(Result)) {
+        .error_union => |v| v.payload,
+        else => Result,
+    };
+}
+
 pub inline fn canHaveDecls(comptime T: type) bool {
     return switch (@typeInfo(T)) {
         .@"struct" => true,
@@ -47,4 +72,21 @@ pub inline fn canBeDeinitializedWithoutAllocator(comptime T: type) bool {
     }
 
     return false;
+}
+
+pub inline fn errorOrUnrechable(value: anytype) !switch (@typeInfo(@TypeOf(value))) {
+    .error_union => anyerror,
+    else => noreturn,
+} {
+    return switch (@typeInfo(@TypeOf(value))) {
+        .error_union => value,
+        else => unreachable,
+    };
+}
+
+pub inline fn derefIfNeeded(value: anytype) MakeConst(@TypeOf(value)) {
+    return switch (@typeInfo(@TypeOf(value))) {
+        .pointer => value.*,
+        else => value,
+    };
 }

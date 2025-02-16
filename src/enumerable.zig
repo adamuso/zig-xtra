@@ -7,48 +7,6 @@ const _iter = @import("iterator.zig");
 const helpers = @import("helpers.zig");
 pub const Iterator = _iter.Iterator;
 
-inline fn AttachError(comptime Result: type) type {
-    return switch (@typeInfo(Result)) {
-        .error_union => |v| anyerror!v.payload,
-        else => anyerror!Result,
-    };
-}
-
-inline fn AttachErrorIf(comptime Result: type, comptime conidtion: bool) type {
-    return if (conidtion) AttachError(Result) else Result;
-}
-
-inline fn DetachError(comptime Result: type) type {
-    return switch (@typeInfo(Result)) {
-        .error_union => |v| v.payload,
-        else => Result,
-    };
-}
-
-inline fn MakeConst(comptime Result: type) type {
-    return switch (@typeInfo(Result)) {
-        .pointer => |v| v.child,
-        else => Result,
-    };
-}
-
-inline fn derefIfNeeded(value: anytype) MakeConst(@TypeOf(value)) {
-    return switch (@typeInfo(@TypeOf(value))) {
-        .pointer => value.*,
-        else => value,
-    };
-}
-
-inline fn errorOrUnrechable(value: anytype) !switch (@typeInfo(@TypeOf(value))) {
-    .error_union => anyerror,
-    else => noreturn,
-} {
-    return switch (@typeInfo(@TypeOf(value))) {
-        .error_union => value,
-        else => unreachable,
-    };
-}
-
 inline fn hasError(value: anytype) bool {
     return switch (@typeInfo(@TypeOf(value))) {
         .error_union => true,
@@ -70,14 +28,38 @@ const EnumerableOperation = union(enum) {
         allocator: std.mem.Allocator,
         func: closure.AnyClosure,
     },
+
+    pub fn dupe(self: *const EnumerableOperation, allocator: std.mem.Allocator) !EnumerableOperation {
+        return switch (self.*) {
+            .Identity => self.*,
+            .Map => |v| .{
+                .Map = .{
+                    .func = try v.func.dupe(allocator),
+                    .has_index = v.has_index,
+                },
+            },
+            .Filter => |v| .{
+                .Filter = .{
+                    .func = try v.func.dupe(allocator),
+                    .has_error = v.has_error,
+                },
+            },
+            .OrderBy => |v| .{
+                .OrderBy = .{
+                    .allocator = allocator,
+                    .func = try v.func.dupe(allocator),
+                },
+            },
+        };
+    }
 };
 
 pub fn Enumerable(comptime Result: type, comptime Source: type) type {
     return struct {
         const Self = @This();
-        const Iter = Iterator(AttachError(Result));
+        const Iter = Iterator(helpers.AttachError(Result));
         const is_internal = helpers.canHaveDecls(Source) and @hasDecl(Source, "iterator");
-        const UnwrappedSource = if (is_internal) Source.UnwrappedSource else AttachError(Source);
+        const UnwrappedSource = if (is_internal) Source.UnwrappedSource else helpers.AttachError(Source);
 
         const result_has_error: bool = switch (@typeInfo(Result)) {
             .error_union => true,
@@ -279,14 +261,23 @@ pub fn Enumerable(comptime Result: type, comptime Source: type) type {
             };
         }
 
-        fn chain(self: Self, comptime NextResult: type, operation: EnumerableOperation) Enumerable(NextResult, Self) {
+        fn chain(
+            self: Self,
+            comptime NextResult: type,
+            operation: EnumerableOperation,
+        ) Enumerable(NextResult, Self) {
             return .{
                 .prev_source = self,
                 .operation = operation,
             };
         }
 
-        fn chainWithContext(self: Self, comptime NextResult: type, allocator: std.mem.Allocator, operation: EnumerableOperation) Enumerable(NextResult, Self) {
+        fn chainWithContext(
+            self: Self,
+            comptime NextResult: type,
+            allocator: std.mem.Allocator,
+            operation: EnumerableOperation,
+        ) Enumerable(NextResult, Self) {
             const context = allocator.create(?Any);
 
             if (context) |v| {
@@ -317,7 +308,7 @@ pub fn Enumerable(comptime Result: type, comptime Source: type) type {
         pub fn mapTo(
             self: *const Self,
             comptime MapResult: type,
-            function: closure.OpaqueClosure(fn (item: DetachError(Iter.Result)) MapResult),
+            function: closure.OpaqueClosure(fn (item: helpers.DetachError(Iter.Result)) MapResult),
         ) Enumerable(MapResult, Self) {
             return self.chain(MapResult, .{
                 .Map = .{
@@ -330,7 +321,7 @@ pub fn Enumerable(comptime Result: type, comptime Source: type) type {
         pub fn mapToWithIndex(
             self: *const Self,
             comptime MapResult: type,
-            function: closure.OpaqueClosure(fn (item: DetachError(Iter.Result), index: usize) MapResult),
+            function: closure.OpaqueClosure(fn (item: helpers.DetachError(Iter.Result), index: usize) MapResult),
         ) Enumerable(MapResult, Self) {
             return self.chain(MapResult, .{
                 .Map = .{
@@ -390,147 +381,61 @@ pub fn Enumerable(comptime Result: type, comptime Source: type) type {
         }
 
         // Finalizers
-        pub fn toArrayList(self: @This(), allocator: std.mem.Allocator) !std.ArrayList(Result) {
-            var list = std.ArrayList(Result).init(allocator);
-            var self_copy = self;
-            var it = self_copy.iterator();
-            it.reset();
-            errdefer list.deinit();
-            defer it.deinit();
+        pub fn toArrayList(self: @This(), allocator: std.mem.Allocator) !std.ArrayList(Iter.FinalizerResult) {
+            var it = self.iterator();
 
-            while (it.next()) |v| {
-                (try list.addOne()).* = try v;
-            }
-
-            return list;
+            return try it.toArrayList(allocator);
         }
 
-        pub fn toArray(self: @This(), allocator: std.mem.Allocator) ![]const Result {
+        pub fn toArray(self: @This(), allocator: std.mem.Allocator) ![]const Iter.FinalizerResult {
             var list = try self.toArrayList(allocator);
             return list.toOwnedSlice();
         }
 
-        pub fn destroyAll(self: @This(), allocator: std.mem.Allocator) AttachErrorIf(void, result_has_error) {
-            var self_copy = self;
-            var it = self_copy.iterator();
-            it.reset();
-            defer it.deinit();
+        pub fn destroyAll(self: @This(), allocator: std.mem.Allocator) helpers.AttachErrorIf(void, result_has_error) {
+            var it = self.iterator();
 
-            while (it.next()) |v| {
-                const value = v catch |err| return errorOrUnrechable(err);
-
-                raii.destroy(@TypeOf(value.*), allocator, value);
-            }
+            return it.destroyAll(allocator);
         }
 
         pub fn deinitAll(
             self: @This(),
             // allocator: if (can_result_be_deinitialized_without_an_allocator) void else std.mem.Allocator,
             allocator: std.mem.Allocator,
-        ) AttachErrorIf(void, result_has_error) {
-            var self_copy = self;
-            var it = self_copy.iterator();
-            it.reset();
-            defer it.deinit();
+        ) helpers.AttachErrorIf(void, result_has_error) {
+            var it = self.iterator();
 
-            while (it.next()) |v| {
-                const value = v catch |err| return errorOrUnrechable(err);
-
-                // if (can_result_be_deinitialized_without_an_allocator) {
-                //     auto_deinit.autoDeinitWithoutAllocator(@TypeOf(value), value);
-                // } else {
-                //     auto_deinit.autoDeinit(@TypeOf(value), value, allocator);
-                // }
-
-                raii.deinit(@TypeOf(value.*), allocator, value);
-            }
+            return it.deinitAll(allocator);
         }
 
-        pub fn forEach(self: @This(), func: closure.OpaqueClosure(fn (Result) void)) AttachErrorIf(void, result_has_error) {
-            defer func.deinit();
+        pub fn forEach(self: @This(), func: closure.OpaqueClosure(fn (Iter.FinalizerResult) void)) helpers.AttachErrorIf(void, result_has_error) {
+            var it = self.iterator();
 
-            var self_copy = self;
-            var it = self_copy.iterator();
-            it.reset();
-            defer it.deinit();
-
-            while (it.next()) |v| {
-                func.invoke(v catch |err| return errorOrUnrechable(err));
-            }
+            return it.forEach(func) catch |err| helpers.errorOrUnrechable(err);
         }
 
-        pub fn first(self: @This()) AttachErrorIf(?Result, result_has_error) {
-            var self_copy = self;
-            var it = self_copy.iterator();
-            it.reset();
-            defer it.deinit();
+        pub fn first(self: @This()) helpers.AttachErrorIf(?Result, Iter.result_has_error) {
+            var it = self.iterator();
 
-            while (it.next()) |v| {
-                return v;
-            }
-
-            return null;
+            return it.first();
         }
 
-        pub fn last(self: @This()) AttachErrorIf(?Result, result_has_error) {
-            var self_copy = self;
-            var it = self_copy.iterator();
-            it.reset();
-            defer it.deinit();
+        pub fn last(self: @This()) helpers.AttachErrorIf(?Result, Iter.result_has_error) {
+            var it = self.iterator();
 
-            var copy: ?Result = null;
-
-            while (it.next()) |v| {
-                copy = v catch |err| return errorOrUnrechable(err);
-            }
-
-            return copy;
+            return it.last();
         }
 
-        pub fn findEql(self: @This(), other: MakeConst(DetachError(Result))) AttachErrorIf(?Result, result_has_error) {
-            var self_copy = self;
-            var it = self_copy.iterator();
-            it.reset();
-            defer it.deinit();
+        pub fn findEql(self: @This(), other: helpers.MakeConst(helpers.DetachError(Result))) helpers.AttachErrorIf(?Result, result_has_error) {
+            var it = self.iterator();
 
-            while (it.next()) |v| {
-                const item = v catch |err| return errorOrUnrechable(err);
-
-                if (std.meta.hasMethod(@TypeOf(item), "eql")) {
-                    if (item.eql(other)) {
-                        return item;
-                    }
-                } else {
-                    if (std.meta.eql(derefIfNeeded(item), other)) {
-                        return item;
-                    }
-                }
-            }
-
-            return null;
+            return it.findEql(other);
         }
 
-        pub fn findIndexEql(self: @This(), other: MakeConst(DetachError(Result))) AttachErrorIf(?usize, result_has_error) {
-            var self_copy = self;
-            var it = self_copy.iterator();
-            it.reset();
-            defer it.deinit();
+        pub fn findIndexEql(self: @This(), other: helpers.MakeConst(helpers.DetachError(Result))) helpers.AttachErrorIf(?usize, result_has_error) {
+            var it = self.iterator();
 
-            while (it.next()) |v| {
-                const item = v catch |err| return errorOrUnrechable(err);
-
-                if (std.meta.hasMethod(@TypeOf(item), "eql")) {
-                    if (item.eql(other)) {
-                        return it.index() - 1;
-                    }
-                } else {
-                    if (std.meta.eql(derefIfNeeded(item), other)) {
-                        return it.index() - 1;
-                    }
-                }
-            }
-
-            return null;
+            return it.findIndexEql(other);
         }
 
         // Other methods
@@ -552,6 +457,14 @@ pub fn Enumerable(comptime Result: type, comptime Source: type) type {
             } else |_| {}
         }
 
+        pub fn dupe(self: *const Self, allocator: std.mem.Allocator) !Self {
+            return .{
+                .prev_source = self.prev_source,
+                .operation = try self.operation.dupe(allocator),
+                .context = self.context,
+            };
+        }
+
         pub fn iterator(self: *const Self) Iter {
             return Iter{
                 .ptr = self,
@@ -563,6 +476,100 @@ pub fn Enumerable(comptime Result: type, comptime Source: type) type {
                 },
             };
         }
+
+        pub fn enumerator(self: Self, allocator: std.mem.Allocator) !Enumerator(Result) {
+            return .{
+                .allocator = allocator,
+                .source_enumerable = try .create(Self, allocator, try self.dupe(allocator)),
+                .vtable = comptime &.{
+                    .iterator = @ptrCast(&Self.iterator),
+                },
+            };
+        }
+    };
+}
+
+pub fn Enumerator(comptime Result: type) type {
+    return struct {
+        const Iter = Iterator(helpers.AttachError(Result));
+
+        allocator: std.mem.Allocator,
+        source_enumerable: Any,
+        vtable: *const struct {
+            iterator: *const fn (self: *const anyopaque) Iter,
+        },
+
+        pub fn enumerable(
+            self: @This(),
+            allocator: std.mem.Allocator,
+        ) Enumerable(Iter.Result, Iter.Result) {
+            return Enumerable(Iter.Result, Iter.Result)
+                .initCopy(allocator, self.iterator());
+        }
+
+        pub fn toArrayList(self: @This(), allocator: std.mem.Allocator) !std.ArrayList(Iter.FinalizerResult) {
+            var it = self.iterator();
+
+            return try it.toArrayList(allocator);
+        }
+
+        pub fn toArray(self: @This(), allocator: std.mem.Allocator) ![]const Iter.FinalizerResult {
+            var list = try self.toArrayList(allocator);
+            return list.toOwnedSlice();
+        }
+
+        pub fn destroyAll(self: @This(), allocator: std.mem.Allocator) helpers.AttachErrorIf(void, Iter.result_has_error) {
+            var it = self.iterator();
+
+            return it.destroyAll(allocator);
+        }
+
+        pub fn deinitAll(
+            self: @This(),
+            // allocator: if (can_result_be_deinitialized_without_an_allocator) void else std.mem.Allocator,
+            allocator: std.mem.Allocator,
+        ) helpers.AttachErrorIf(void, Iter.result_has_error) {
+            var it = self.iterator();
+
+            return it.deinitAll(allocator);
+        }
+
+        pub fn forEach(self: @This(), func: closure.OpaqueClosure(fn (Iter.FinalizerResult) void)) helpers.AttachErrorIf(void, Iter.result_has_error) {
+            var it = self.iterator();
+
+            return it.forEach(func) catch |err| helpers.errorOrUnrechable(err);
+        }
+
+        pub fn first(self: @This()) helpers.AttachErrorIf(?Result, Iter.result_has_error) {
+            var it = self.iterator();
+
+            return it.first();
+        }
+
+        pub fn last(self: @This()) helpers.AttachErrorIf(?Result, Iter.result_has_error) {
+            var it = self.iterator();
+
+            return it.last();
+        }
+
+        pub fn findEql(self: @This(), other: helpers.MakeConst(helpers.DetachError(Result))) helpers.AttachErrorIf(?Result, Iter.result_has_error) {
+            var it = self.iterator();
+
+            return it.findEql(other);
+        }
+
+        pub fn findIndexEql(self: @This(), other: helpers.MakeConst(helpers.DetachError(Result))) helpers.AttachErrorIf(?usize, Iter.result_has_error) {
+            var it = self.iterator();
+
+            return it.findIndexEql(other);
+        }
+
+        // Other methods
+        pub fn iterator(self: @This()) Iter {
+            return self.vtable.iterator(self.source_enumerable.ptr);
+        }
+
+        pub const deinit = raii.default(@This(), .{});
     };
 }
 
@@ -859,4 +866,42 @@ test "Enumerable temporary value with destroyed scope" {
     defer allocator.free(y);
 
     try std.testing.expectEqualDeep(@as([]const f32, &.{ 16, 32, 48 }), y);
+}
+
+test "Enumerator" {
+    const Foo = struct {
+        pub fn createSource(iterator: *Iterator(u32), allocator: std.mem.Allocator) !Enumerator(f32) {
+            var x = fromIterator(u32, iterator);
+
+            return try x.filter(closure.fromStruct(struct {
+                pub fn filter(_: void, item: u32) bool {
+                    return item % 2 == 0;
+                }
+            }, {}).toOpaque()).map(closure.fromStruct(struct {
+                pub fn map(_: void, item: u32) f32 {
+                    return @as(f32, @floatFromInt(item)) * 2;
+                }
+            }, {}).toOpaque()).map(closure.fromStruct(struct {
+                pub fn map(_: void, item: f32) f32 {
+                    return item * 4;
+                }
+            }, {}).toOpaque()).enumerator(allocator);
+        }
+    };
+
+    const allocator = std.testing.allocator;
+
+    var iterator = Iterator(u32).fromSlice(&.{ 1, 2, 3, 4, 5, 6 });
+
+    var source = try Foo.createSource(&iterator, allocator);
+    defer source.deinit();
+
+    const y = try source.enumerable(allocator).mapTo(f32, .fromStruct(struct {
+        pub fn map(_: void, item: f32) f32 {
+            return item * 2;
+        }
+    }, {})).toArray(allocator);
+    defer allocator.free(y);
+
+    try std.testing.expectEqualDeep(@as([]const f32, &.{ 32, 64, 96 }), y);
 }
