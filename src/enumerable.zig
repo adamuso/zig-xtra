@@ -138,7 +138,7 @@ pub fn Enumerable(comptime Result: type, comptime Source: type) type {
                     };
 
                     switch (self.operation) {
-                        .Identity => return if (Result == Source) item else unreachable,
+                        .Identity => return if (Result == Source or anyerror!Result == Source) item else unreachable,
                         .Map => |v| if (v.has_index) {
                             return (v.func.toOpaque(fn (Item, usize) Result) catch @panic("These functions must match"))
                                 .invoke(item, it.index() - 1);
@@ -343,7 +343,7 @@ pub fn Enumerable(comptime Result: type, comptime Source: type) type {
             });
         }
 
-        pub fn filterBy(self: *const Self, function: closure.OpaqueClosure(fn (Result) bool)) Enumerable(Result, Self) {
+        pub fn filterBy(self: *const Self, function: closure.OpaqueClosure(fn (helpers.DetachError(Result)) bool)) Enumerable(Result, Self) {
             return self.chain(Result, .{
                 .Filter = .{
                     .func = function.closure,
@@ -502,8 +502,8 @@ pub fn Enumerator(comptime Result: type) type {
         pub fn enumerable(
             self: @This(),
             allocator: std.mem.Allocator,
-        ) Enumerable(Iter.Result, Iter.Result) {
-            return Enumerable(Iter.Result, Iter.Result)
+        ) Enumerable(Result, Iter.Result) {
+            return Enumerable(Result, Iter.Result)
                 .initCopy(allocator, self.iterator());
         }
 

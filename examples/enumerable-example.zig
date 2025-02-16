@@ -68,3 +68,35 @@ test {
 
     try std.testing.expectEqualSlices(u32, &.{ 4, 8, 12, 16 }, result);
 }
+
+test {
+    const Foo = struct {
+        pub fn onlyEven(enumerator: xtra.enumerable.Enumerator(u32)) !xtra.enumerable.Enumerator(u32) {
+            return try enumerator.enumerable(enumerator.allocator).filterBy(.fromStruct(struct {
+                pub fn filter(_: void, item: u32) bool {
+                    return item % 2 == 0;
+                }
+            }, {})).enumerator(enumerator.allocator);
+        }
+
+        pub fn doubleAll(enumerator: xtra.enumerable.Enumerator(u32)) !xtra.enumerable.Enumerator(u32) {
+            return try enumerator.enumerable(enumerator.allocator).mapTo(u32, .fromStruct(struct {
+                pub fn map(_: void, item: u32) u32 {
+                    return item * 2;
+                }
+            }, {})).enumerator(enumerator.allocator);
+        }
+    };
+
+    var iterator = xtra.iterator.Iterator(u32).fromSlice(&.{ 1, 2, 3, 4, 5, 6, 7, 8 });
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    var enumerator = try xtra.enumerable.fromIterator(u32, &iterator).enumerator(arena.allocator());
+    enumerator = try Foo.onlyEven(enumerator);
+    enumerator = try Foo.doubleAll(enumerator);
+
+    const result = try enumerator.toArray(std.testing.allocator);
+    defer std.testing.allocator.free(result);
+
+    try std.testing.expectEqualSlices(u32, &.{ 4, 8, 12, 16 }, result);
+}
